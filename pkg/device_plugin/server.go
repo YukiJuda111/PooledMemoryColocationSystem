@@ -42,7 +42,7 @@ func (c *GopherDevicePlugin) Run() error {
 			log.Println("watch devices error")
 		}
 	}()
-	// register grpc
+	// use grpc to register
 	pluginapi.RegisterDevicePluginServer(c.server, c)
 	// delete old unix socket before start
 	// /var/lib/kubelet/device-plugins/gopher.sock

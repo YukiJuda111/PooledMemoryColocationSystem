@@ -8,6 +8,7 @@ import (
 
 func main() {
 	klog.Infof("device plugin starting")
+
 	dp := device_plugin.NewGopherDevicePlugin()
 	go dp.Run()
 

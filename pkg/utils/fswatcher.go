@@ -8,6 +8,7 @@ import (
 )
 
 // WatchKubelet restart device plugin when kubelet restarted
+// 当kubelet重启后，device plugin也要重启
 func WatchKubelet(stop chan<- struct{}) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {

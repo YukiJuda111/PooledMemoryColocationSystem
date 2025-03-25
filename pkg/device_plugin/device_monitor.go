@@ -70,6 +70,7 @@ func (d *DeviceMonitor) Watch() error {
 				}
 				klog.Infof("fsnotify device event: %s %s", event.Name, event.Op.String())
 
+				// TODO: 内存增加时，先看看在用池化内存的pod有没有可以换入的
 				if event.Op == fsnotify.Create {
 					dev := path.Base(event.Name)
 					d.devices[dev] = &pluginapi.Device{
@@ -83,7 +84,7 @@ func (d *DeviceMonitor) Watch() error {
 					delete(d.devices, dev)
 					d.notify <- struct{}{}
 					klog.Infof("device [%s] removed", dev)
-				}
+				} // TODO: 内存减少时，得用env来检查有没有不够用的pod，把pod换入CXL或兜底迁移
 
 			case err, ok := <-w.Errors:
 				if !ok {
