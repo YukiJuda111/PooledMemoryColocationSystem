@@ -1,4 +1,4 @@
-IMG = docker.io/liuyang/colocation-memory-device-plugin:latest
+IMG = docker.io/yuk1judaiii/colocation-memory-device-plugin:latest
 
 .PHONY: build
 build:

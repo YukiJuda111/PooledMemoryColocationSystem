@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: colocation-memory-device-plugin
-          image: docker.io/lixd96/i-device-plugin:latest # TODO
+          image: docker.io/yuk1judaiii/i-device-plugin:latest # TODO
           imagePullPolicy: IfNotPresent
           resources:
             limits:

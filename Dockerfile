@@ -11,13 +11,13 @@ RUN go mod download
 COPY . .
 
 # Build the project
-RUN CGO_ENABLED=0 GOOS=linux go build -o bin/i-device-plugin cmd/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o bin/colocation-memory-device-plugin cmd/main.go
 
 FROM alpine:latest
 
 WORKDIR /root/
 
 # Copy the binary from the builder stage
-COPY --from=builder /app/bin/i-device-plugin .
+COPY --from=builder /app/bin/colocation-memory-device-plugin .
 
 ENTRYPOINT ["./i-device-plugin"]
