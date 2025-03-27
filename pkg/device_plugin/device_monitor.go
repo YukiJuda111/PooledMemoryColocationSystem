@@ -27,7 +27,7 @@ func NewDeviceMonitor(path string) *DeviceMonitor {
 	}
 }
 
-// List all device
+// TODO: 这里获取所有的ColocMemUnits []string
 func (d *DeviceMonitor) List() error {
 	err := filepath.Walk(d.path, func(path string, info fs.FileInfo, err error) error {
 		if info.IsDir() {

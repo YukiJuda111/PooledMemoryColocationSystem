@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: i-device-plugin
+  name: colocation-memory-device-plugin
   namespace: kube-system
   labels:
-    app: i-device-plugin
+    app: colocation-memory-device-plugin
 spec:
   selector:
     matchLabels:
-      app: i-device-plugin
+      app: colocation-memory-device-plugin
   template:
     metadata:
       labels:
-        app: i-device-plugin
+        app: colocation-memory-device-plugin
     spec:
       containers:
-        - name: i-device-plugin
-          image: docker.io/lixd96/i-device-plugin:latest
+        - name: colocation-memory-device-plugin
+          image: docker.io/lixd96/i-device-plugin:latest # TODO
           imagePullPolicy: IfNotPresent
           resources:
             limits:
@@ -28,12 +28,12 @@ spec:
           volumeMounts:
             - name: device-plugin
               mountPath: /var/lib/kubelet/device-plugins
-            - name: gophers
+            - name: gophers # TODO
               mountPath: /etc/gophers
       volumes:
         - name: device-plugin
           hostPath:
             path: /var/lib/kubelet/device-plugins
-        - name: gophers
+        - name: gophers # TODO
           hostPath:
             path: /etc/gophers

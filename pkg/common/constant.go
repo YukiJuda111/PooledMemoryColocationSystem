@@ -3,8 +3,8 @@ package common
 import "time"
 
 const (
-	ResourceName   string = "lixueduan.com/gopher"
+	ResourceName   string = "liuyang.io/colocation-memory"
 	DevicePath     string = "/etc/gophers"
-	DeviceSocket   string = "gopher.sock"
+	DeviceSocket   string = "colocation-memory.sock"
 	ConnectTimeout        = time.Second * 5
 )

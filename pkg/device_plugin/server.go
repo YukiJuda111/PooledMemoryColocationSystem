@@ -45,7 +45,7 @@ func (c *GopherDevicePlugin) Run() error {
 	// use grpc to register
 	pluginapi.RegisterDevicePluginServer(c.server, c)
 	// delete old unix socket before start
-	// /var/lib/kubelet/device-plugins/gopher.sock
+	// /var/lib/kubelet/device-plugins/colocationMemory.sock
 	socket := path.Join(pluginapi.DevicePluginPath, common.DeviceSocket)
 	err = syscall.Unlink(socket)
 	if err != nil && !os.IsNotExist(err) {
