@@ -1,4 +1,4 @@
-module github.com/lixd/i-device-plugin
+module liuyang/colocation-memory-device-plugin
 
 go 1.22.5
 

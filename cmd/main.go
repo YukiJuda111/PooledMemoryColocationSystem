@@ -1,8 +1,9 @@
 package main
 
 import (
-	"github.com/lixd/i-device-plugin/pkg/device_plugin"
-	"github.com/lixd/i-device-plugin/pkg/utils"
+	"liuyang/colocation-memory-device-plugin/pkg/device_plugin"
+	"liuyang/colocation-memory-device-plugin/pkg/utils"
+
 	"k8s.io/klog/v2"
 )
 

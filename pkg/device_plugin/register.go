@@ -4,7 +4,8 @@ import (
 	"context"
 	"path"
 
-	"github.com/lixd/i-device-plugin/pkg/common"
+	"liuyang/colocation-memory-device-plugin/pkg/common"
+
 	"github.com/pkg/errors"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )

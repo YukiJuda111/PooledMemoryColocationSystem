@@ -9,7 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lixd/i-device-plugin/pkg/common"
+	"liuyang/colocation-memory-device-plugin/pkg/common"
+
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
