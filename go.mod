@@ -1,6 +1,6 @@
 module liuyang/colocation-memory-device-plugin
 
-go 1.22.5
+go 1.24.1
 
 require (
 	github.com/fsnotify/fsnotify v1.7.0
