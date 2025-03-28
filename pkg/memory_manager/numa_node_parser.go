@@ -1,5 +1,11 @@
 package memory_manager
 
+/**
+author:liuyang
+date:2025-3-28
+NUMA节点内存资源解析
+*/
+
 import (
 	"fmt"
 	"os"
