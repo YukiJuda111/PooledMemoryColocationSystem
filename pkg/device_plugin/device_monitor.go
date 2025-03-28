@@ -30,6 +30,10 @@ func NewDeviceMonitor(path string) *DeviceMonitor {
 // TODO: 这里获取所有的ColocMemUnits []string
 func (d *DeviceMonitor) List() error {
 	err := filepath.Walk(d.path, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return errors.WithMessagef(err, "walk [%s] failed", d.path)
+		}
+
 		if info.IsDir() {
 			klog.Infof("%s is dir,skip", path)
 			return nil
