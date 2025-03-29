@@ -2,6 +2,7 @@ package device_plugin
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -45,9 +46,33 @@ func (c *ColocationMemoryDevicePlugin) ListAndWatch(_ *pluginapi.Empty, srv plug
 // guaranteed to be the allocation ultimately performed by the
 // devicemanager. It is only designed to help the devicemanager make a more
 // informed allocation decision when possible.
-// TODO: 在这里做NUMA亲和性
-func (c *ColocationMemoryDevicePlugin) GetPreferredAllocation(_ context.Context, _ *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
-	return &pluginapi.PreferredAllocationResponse{}, nil
+func (c *ColocationMemoryDevicePlugin) GetPreferredAllocation(_ context.Context, r *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
+	var containerResponses []*pluginapi.ContainerPreferredAllocationResponse
+	klog.Info("GetPreferredAllocation 执行了")
+	// 遍历每个容器的分配请求
+	for _, req := range r.ContainerRequests {
+		availableDevices := req.AvailableDeviceIDs
+		allocationSize := req.AllocationSize
+		klog.Info("排序前", availableDevices, allocationSize)
+
+		// 根据业务逻辑对设备进行排序
+		// 例如：按设备 ID 升序排列
+		sort.Strings(availableDevices)
+		klog.Info("排序后", availableDevices)
+		// 选择前 N 个设备
+		preferredDevices := availableDevices[:allocationSize]
+		klog.Info("选择前 N 个设备", preferredDevices)
+
+		// 添加到响应中
+		containerResponses = append(containerResponses, &pluginapi.ContainerPreferredAllocationResponse{
+			DeviceIDs: preferredDevices,
+		})
+	}
+
+	// 返回优先分配的设备列表
+	return &pluginapi.PreferredAllocationResponse{
+		ContainerResponses: containerResponses,
+	}, nil
 }
 
 // Allocate is called during container creation so that the Device
@@ -61,7 +86,7 @@ func (c *ColocationMemoryDevicePlugin) Allocate(_ context.Context, reqs *plugina
 		klog.Infof("[Allocate] received request: %v", strings.Join(req.DevicesIDs, ","))
 		resp := pluginapi.ContainerAllocateResponse{
 			Envs: map[string]string{
-				"Gopher": strings.Join(req.DevicesIDs, ","),
+				"ColocationMemory": strings.Join(req.DevicesIDs, ","),
 			},
 		}
 		ret.ContainerResponses = append(ret.ContainerResponses, &resp)

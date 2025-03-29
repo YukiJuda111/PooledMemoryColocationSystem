@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: gopher-pod3
+  name: gopher-pod
 spec:
   containers:
     - name: gopher-container

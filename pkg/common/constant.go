@@ -4,7 +4,6 @@ import "time"
 
 const (
 	ResourceName    string = "liuyang.io/colocation-memory"
-	DevicePath      string = "/etc/gophers"
 	DeviceSocket    string = "colocation-memory.sock"
 	ConnectTimeout         = time.Second * 5
 	BlockSize              = 512 * 1024 * 1024 // 512MB
@@ -12,6 +11,6 @@ const (
 	K8sPodsBasePath        = "/sys/fs/cgroup/kubepods.slice"
 	BurstablePath          = "/kubepods-burstable.slice/memory.current"
 	BestEffortPath         = "/kubepods-besteffort.slice/memory.current"
-	RefreshInterval        = 5 * time.Second
+	RefreshInterval        = time.Second * 5
 	DeviceName             = "CM%d" // 设备名称
 )
