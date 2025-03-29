@@ -11,7 +11,7 @@ import (
 )
 
 // Register registers the device plugin for the given resourceName with Kubelet.
-func (c *GopherDevicePlugin) Register() error {
+func (c *ColocationMemoryDevicePlugin) Register() error {
 	conn, err := connect(pluginapi.KubeletSocket, common.ConnectTimeout)
 	if err != nil {
 		return errors.WithMessagef(err, "connect to %s failed", pluginapi.KubeletSocket)

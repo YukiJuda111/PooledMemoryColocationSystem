@@ -11,7 +11,7 @@ import (
 
 // GetDevicePluginOptions returns options to be communicated with Device
 // Manager
-func (c *GopherDevicePlugin) GetDevicePluginOptions(_ context.Context, _ *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
+func (c *ColocationMemoryDevicePlugin) GetDevicePluginOptions(_ context.Context, _ *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
 	return &pluginapi.DevicePluginOptions{PreStartRequired: true}, nil
 }
 
@@ -22,9 +22,9 @@ func (c *GopherDevicePlugin) GetDevicePluginOptions(_ context.Context, _ *plugin
 // 增加：append到尾部
 // 减少：从尾到头删除
 // 申请：从头到尾申请
-func (c *GopherDevicePlugin) ListAndWatch(_ *pluginapi.Empty, srv pluginapi.DevicePlugin_ListAndWatchServer) error {
+func (c *ColocationMemoryDevicePlugin) ListAndWatch(_ *pluginapi.Empty, srv pluginapi.DevicePlugin_ListAndWatchServer) error {
 	devs := c.dm.Devices()
-	klog.Infof("find devices [%s]", String(devs))
+	klog.Info("[ListAndWatch] number of init devices: ", len(devs))
 
 	err := srv.Send(&pluginapi.ListAndWatchResponse{Devices: devs})
 	if err != nil {
@@ -46,7 +46,7 @@ func (c *GopherDevicePlugin) ListAndWatch(_ *pluginapi.Empty, srv pluginapi.Devi
 // devicemanager. It is only designed to help the devicemanager make a more
 // informed allocation decision when possible.
 // TODO: 在这里做NUMA亲和性
-func (c *GopherDevicePlugin) GetPreferredAllocation(_ context.Context, _ *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
+func (c *ColocationMemoryDevicePlugin) GetPreferredAllocation(_ context.Context, _ *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
 	return &pluginapi.PreferredAllocationResponse{}, nil
 }
 
@@ -55,7 +55,7 @@ func (c *GopherDevicePlugin) GetPreferredAllocation(_ context.Context, _ *plugin
 // of the steps to make the Device available in the container
 // 由于没有用原生k8s的内存资源，这里最重要的是要用cgroups对内存做实际的限制
 // 如果原先申请的设备资源（动态内存）不够了，运行中的POD并不会被自动驱逐，还是要用cgroups的驱逐机制
-func (c *GopherDevicePlugin) Allocate(_ context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
+func (c *ColocationMemoryDevicePlugin) Allocate(_ context.Context, reqs *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
 	ret := &pluginapi.AllocateResponse{}
 	for _, req := range reqs.ContainerRequests {
 		klog.Infof("[Allocate] received request: %v", strings.Join(req.DevicesIDs, ","))
@@ -72,6 +72,6 @@ func (c *GopherDevicePlugin) Allocate(_ context.Context, reqs *pluginapi.Allocat
 // PreStartContainer is called, if indicated by Device Plugin during registeration phase,
 // before each container start. Device plugin can run device specific operations
 // such as reseting the device before making devices available to the container
-func (c *GopherDevicePlugin) PreStartContainer(_ context.Context, _ *pluginapi.PreStartContainerRequest) (*pluginapi.PreStartContainerResponse, error) {
+func (c *ColocationMemoryDevicePlugin) PreStartContainer(_ context.Context, _ *pluginapi.PreStartContainerRequest) (*pluginapi.PreStartContainerResponse, error) {
 	return &pluginapi.PreStartContainerResponse{}, nil
 }

@@ -13,19 +13,10 @@ date:2025-3-19
 
 import (
 	"fmt"
+	"liuyang/colocation-memory-device-plugin/pkg/common"
 	"path"
-	"time"
 
 	"k8s.io/klog/v2"
-)
-
-const (
-	BlockSize       = 512 * 1024 * 1024 // 512MB
-	RefreshInterval = 5 * time.Second
-	SafetyWatermark = 0.1 // 10%安全水位
-	K8sPodsBasePath = "/sys/fs/cgroup/kubepods.slice"
-	BurstablePath   = "/kubepods-burstable.slice/memory.current"
-	BestEffortPath  = "/kubepods-besteffort.slice/memory.current"
 )
 
 type MemoryManager struct {
@@ -34,38 +25,37 @@ type MemoryManager struct {
 	SafetyMargin    uint64   // 安全水位
 	ColocMemory     uint64   // 可用混部内存
 	ColocMemoryList []string // 混部内存虚拟块队列 = 可用混部内存 / BlockSize
-	prevBlocks      int      // 用于维护先前的混部内存虚拟块数
+	PrevBlocks      int      // 用于维护先前的混部内存虚拟块数
 }
 
 func NewMemoryManager() *MemoryManager {
-	return &MemoryManager{
+	mm := &MemoryManager{
 		ColocMemoryList: make([]string, 0),
 	}
+	err := mm.Initialize()
+	if err != nil {
+		klog.Fatalf("[NewMemoryManager] 初始化内存信息失败: %v", err)
+	}
+	return mm
 }
 
 // 初始化内存信息
-func (m *MemoryManager) NewMemoryManager() error {
+func (m *MemoryManager) Initialize() error {
 
-	m.updateState()
-	m.adjustBlocks()
+	m.UpdateState()
+	// 计算初始块数
+	currentBlocks := int(m.ColocMemory / common.BlockSize)
+	for i := range currentBlocks {
+		m.ColocMemoryList = append(m.ColocMemoryList, fmt.Sprintf("colocationMemory%d", i))
+	}
+	// 记录上次块数
+	m.PrevBlocks = currentBlocks
 	klog.Infof("[NewMemoryManager] 初始化内存信息: 系统总内存=%d, 在线任务内存=%d, 安全水位=%d\n", m.TotalMemory, m.OnlinePodsUsed, m.SafetyMargin)
 	return nil
 }
 
-// 定期刷新状态
-func (m *MemoryManager) WatchColocationMemory() {
-	ticker := time.NewTicker(RefreshInterval)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		m.updateState()
-		m.adjustBlocks()
-		klog.Info("[WatchMemory] 混部内存更新: ", m.ColocMemoryList[len(m.ColocMemoryList)-3:], m.prevBlocks)
-	}
-}
-
 // 更新内存状态
-func (m *MemoryManager) updateState() {
+func (m *MemoryManager) UpdateState() {
 
 	total, onlinePodsUsed, err := getSystemMemeoryInfo()
 	if err != nil {
@@ -74,7 +64,7 @@ func (m *MemoryManager) updateState() {
 
 	m.TotalMemory = total
 	m.OnlinePodsUsed = onlinePodsUsed
-	m.SafetyMargin = uint64(float64(total) * SafetyWatermark)
+	m.SafetyMargin = uint64(float64(total) * common.SafetyWatermark)
 	m.calculateColocationMemory()
 }
 
@@ -89,35 +79,9 @@ func (m *MemoryManager) calculateColocationMemory() {
 	}
 }
 
-// 调整虚拟块队列
-func (m *MemoryManager) adjustBlocks() {
-
-	// 计算当前块数
-	currentBlocks := int(m.ColocMemory / BlockSize)
-	delta := currentBlocks - m.prevBlocks
-
-	switch {
-	case delta > 0:
-		// 增加块
-		for i := range delta {
-			m.ColocMemoryList = append(m.ColocMemoryList, fmt.Sprintf("colocationMemory%d", i+m.prevBlocks))
-		}
-	case delta < 0:
-		// 减少块（从尾部移除）
-		removeCount := -delta
-		if removeCount > len(m.ColocMemoryList) {
-			m.ColocMemoryList = m.ColocMemoryList[:0]
-		} else {
-			m.ColocMemoryList = m.ColocMemoryList[:len(m.ColocMemoryList)-removeCount]
-		}
-	}
-
-	m.prevBlocks = currentBlocks
-}
-
 // 获取合并的NUMA信息
 func getSystemMemeoryInfo() (total, k8sUsed uint64, err error) {
-	// TODO: 这里写死了NUMA0和NUMA1，后续可以考虑动态获取
+	// TODO: 这里写死了NUMA0,1
 	// 获取NUMA0信息
 	node0, err := GetNumaMemInfo(0)
 	if err != nil {
@@ -131,7 +95,7 @@ func getSystemMemeoryInfo() (total, k8sUsed uint64, err error) {
 	}
 
 	// 合并K8s使用量
-	k8sOnlineMemoryPath := path.Join(K8sPodsBasePath, BurstablePath)
+	k8sOnlineMemoryPath := path.Join(common.K8sPodsBasePath, common.BurstablePath)
 	k8sOnlineMemoryUsage, err := GetCgroupsMemoryInfo(k8sOnlineMemoryPath)
 	if err != nil {
 		return 0, 0, err

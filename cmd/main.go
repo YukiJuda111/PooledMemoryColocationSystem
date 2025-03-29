@@ -2,6 +2,7 @@ package main
 
 import (
 	"liuyang/colocation-memory-device-plugin/pkg/device_plugin"
+	"liuyang/colocation-memory-device-plugin/pkg/memory_manager"
 	"liuyang/colocation-memory-device-plugin/pkg/utils"
 
 	"k8s.io/klog/v2"
@@ -9,8 +10,11 @@ import (
 
 func main() {
 	klog.Infof("device plugin starting")
+	// 初始化memory manager
+	mm := memory_manager.NewMemoryManager()
 
-	dp := device_plugin.NewGopherDevicePlugin()
+	// 初始化colocation memory device plugin
+	dp := device_plugin.NewColocationMemoryDevicePlugin(mm)
 	go dp.Run()
 
 	// register when device plugin start

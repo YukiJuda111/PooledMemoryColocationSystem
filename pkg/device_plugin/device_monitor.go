@@ -2,118 +2,140 @@ package device_plugin
 
 import (
 	"fmt"
-	"io/fs"
-	"path"
-	"path/filepath"
+	"liuyang/colocation-memory-device-plugin/pkg/common"
+	"liuyang/colocation-memory-device-plugin/pkg/memory_manager"
 	"strings"
+	"time"
 
-	"github.com/fsnotify/fsnotify"
-	"github.com/pkg/errors"
 	"k8s.io/klog/v2"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
 type DeviceMonitor struct {
-	path    string
-	devices map[string]*pluginapi.Device
+	devices []*pluginapi.Device
 	notify  chan struct{} // notify when device update
+	mm      *memory_manager.MemoryManager
 }
 
-func NewDeviceMonitor(path string) *DeviceMonitor {
+func NewDeviceMonitor(mm *memory_manager.MemoryManager) *DeviceMonitor {
 	return &DeviceMonitor{
-		path:    path,
-		devices: make(map[string]*pluginapi.Device),
+		devices: make([]*pluginapi.Device, 0),
 		notify:  make(chan struct{}),
+		mm:      mm,
 	}
 }
 
-// TODO: 这里获取所有的ColocMemUnits []string
+// List all devices
 func (d *DeviceMonitor) List() error {
-	err := filepath.Walk(d.path, func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return errors.WithMessagef(err, "walk [%s] failed", d.path)
-		}
-
-		if info.IsDir() {
-			klog.Infof("%s is dir,skip", path)
-			return nil
-		}
-
-		d.devices[info.Name()] = &pluginapi.Device{
-			ID:     info.Name(),
+	for _, dev := range d.mm.ColocMemoryList {
+		d.devices = append(d.devices, &pluginapi.Device{
+			ID:     dev,
 			Health: pluginapi.Healthy,
-		}
-		return nil
-	})
-
-	return errors.WithMessagef(err, "walk [%s] failed", d.path)
+		})
+	}
+	return nil
 }
 
 // Watch device change
 func (d *DeviceMonitor) Watch() error {
 	klog.Infoln("watching devices")
 
-	w, err := fsnotify.NewWatcher()
-	if err != nil {
-		return errors.WithMessage(err, "new watcher failed")
+	// w, err := fsnotify.NewWatcher()
+	// if err != nil {
+	// 	return errors.WithMessage(err, "new watcher failed")
+	// }
+	// defer w.Close()
+
+	// errChan := make(chan error)
+	// go func() {
+	// 	defer func() {
+	// 		if r := recover(); r != nil {
+	// 			errChan <- fmt.Errorf("device watcher panic:%v", r)
+	// 		}
+	// 	}()
+	// 	for {
+	// 		select {
+	// 		case event, ok := <-w.Events:
+	// 			if !ok {
+	// 				continue
+	// 			}
+	// 			klog.Infof("fsnotify device event: %s %s", event.Name, event.Op.String())
+
+	// 			if event.Op == fsnotify.Create {
+	// 				dev := path.Base(event.Name)
+	// 				d.devices[dev] = &pluginapi.Device{
+	// 					ID:     dev,
+	// 					Health: pluginapi.Healthy,
+	// 				}
+	// 				d.notify <- struct{}{}
+	// 				klog.Infof("find new device [%s]", dev)
+	// 			} else if event.Op&fsnotify.Remove == fsnotify.Remove {
+	// 				dev := path.Base(event.Name)
+	// 				delete(d.devices, dev)
+	// 				d.notify <- struct{}{}
+	// 				klog.Infof("device [%s] removed", dev)
+	// 			}
+
+	// 		case err, ok := <-w.Errors:
+	// 			if !ok {
+	// 				continue
+	// 			}
+	// 			klog.Errorf("fsnotify watch device failed:%v", err)
+	// 		}
+	// 	}
+	// }()
+
+	// err = w.Add("/etc/gophers")
+	// if err != nil {
+	// 	return fmt.Errorf("watch device error:%v", err)
+	// }
+
+	// return <-errChan
+
+	ticker := time.NewTicker(common.RefreshInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		d.mm.UpdateState()
+		d.adjustDevices()
+		klog.Info("[Watch] 混部内存更新: ", d.mm.ColocMemoryList[len(d.mm.ColocMemoryList)-3:], d.mm.PrevBlocks)
 	}
-	defer w.Close()
+	return nil
 
-	errChan := make(chan error)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				errChan <- fmt.Errorf("device watcher panic:%v", r)
-			}
-		}()
-		for {
-			select {
-			case event, ok := <-w.Events:
-				if !ok {
-					continue
-				}
-				klog.Infof("fsnotify device event: %s %s", event.Name, event.Op.String())
-
-				// TODO: 内存增加时，先看看在用池化内存的pod有没有可以换入的
-				if event.Op == fsnotify.Create {
-					dev := path.Base(event.Name)
-					d.devices[dev] = &pluginapi.Device{
-						ID:     dev,
-						Health: pluginapi.Healthy,
-					}
-					d.notify <- struct{}{}
-					klog.Infof("find new device [%s]", dev)
-				} else if event.Op&fsnotify.Remove == fsnotify.Remove {
-					dev := path.Base(event.Name)
-					delete(d.devices, dev)
-					d.notify <- struct{}{}
-					klog.Infof("device [%s] removed", dev)
-				} // TODO: 内存减少时，得用env来检查有没有不够用的pod，把pod换入CXL或兜底迁移
-
-			case err, ok := <-w.Errors:
-				if !ok {
-					continue
-				}
-				klog.Errorf("fsnotify watch device failed:%v", err)
-			}
-		}
-	}()
-
-	err = w.Add(d.path)
-	if err != nil {
-		return fmt.Errorf("watch device error:%v", err)
-	}
-
-	return <-errChan
 }
 
-// Devices transformer map to slice
-func (d *DeviceMonitor) Devices() []*pluginapi.Device {
-	devices := make([]*pluginapi.Device, 0, len(d.devices))
-	for _, device := range d.devices {
-		devices = append(devices, device)
+// 调整虚拟块队列块数和设备列表
+func (d *DeviceMonitor) adjustDevices() {
+
+	// 计算当前块数
+	currentBlocks := int(d.mm.ColocMemory / common.BlockSize)
+	delta := currentBlocks - d.mm.PrevBlocks
+
+	switch {
+	case delta > 0:
+		// 增加块
+		// TODO: 内存增加时，先看看在用池化内存的pod有没有可以换入的
+		for i := range delta {
+			d.mm.ColocMemoryList = append(d.mm.ColocMemoryList, fmt.Sprintf("colocationMemory%d", i+d.mm.PrevBlocks))
+		}
+	case delta < 0:
+		// 减少块（从尾部移除）
+		// TODO: 内存减少时，得用env来检查有没有不够用的pod，把pod换入CXL或兜底迁移
+		removeCount := -delta
+		if removeCount > len(d.mm.ColocMemoryList) {
+			d.mm.ColocMemoryList = d.mm.ColocMemoryList[:0]
+		} else {
+			d.mm.ColocMemoryList = d.mm.ColocMemoryList[:len(d.mm.ColocMemoryList)-removeCount]
+		}
+	case delta == 0:
+		// TODO: 不变
 	}
-	return devices
+
+	d.mm.PrevBlocks = currentBlocks
+}
+
+func (d *DeviceMonitor) Devices() []*pluginapi.Device {
+	return d.devices
 }
 
 func String(devs []*pluginapi.Device) string {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"liuyang/colocation-memory-device-plugin/pkg/common"
+	"liuyang/colocation-memory-device-plugin/pkg/memory_manager"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
@@ -17,22 +18,22 @@ import (
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
-type GopherDevicePlugin struct {
+type ColocationMemoryDevicePlugin struct {
 	server *grpc.Server
 	stop   chan struct{} // this channel signals to stop the device plugin
 	dm     *DeviceMonitor
 }
 
-func NewGopherDevicePlugin() *GopherDevicePlugin {
-	return &GopherDevicePlugin{
+func NewColocationMemoryDevicePlugin(mm *memory_manager.MemoryManager) *ColocationMemoryDevicePlugin {
+	return &ColocationMemoryDevicePlugin{
 		server: grpc.NewServer(grpc.EmptyServerOption{}),
 		stop:   make(chan struct{}),
-		dm:     NewDeviceMonitor(common.DevicePath),
+		dm:     NewDeviceMonitor(mm),
 	}
 }
 
 // Run start gRPC server and watcher
-func (c *GopherDevicePlugin) Run() error {
+func (c *ColocationMemoryDevicePlugin) Run() error {
 	err := c.dm.List()
 	if err != nil {
 		log.Fatalf("list device error: %v", err)
