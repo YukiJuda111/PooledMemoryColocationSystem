@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"liuyang/colocation-memory-device-plugin/pkg/common"
 	"liuyang/colocation-memory-device-plugin/pkg/memory_manager"
+	"liuyang/colocation-memory-device-plugin/pkg/utils"
 	"strings"
 	"time"
 
@@ -13,14 +14,14 @@ import (
 )
 
 type DeviceMonitor struct {
-	devices []*pluginapi.Device
-	notify  chan struct{} // notify when device update
+	devices map[string]*pluginapi.Device // uuid -> device
+	notify  chan struct{}                // notify when device update
 	mm      *memory_manager.MemoryManager
 }
 
 func NewDeviceMonitor(mm *memory_manager.MemoryManager) *DeviceMonitor {
 	return &DeviceMonitor{
-		devices: make([]*pluginapi.Device, 0),
+		devices: make(map[string]*pluginapi.Device),
 		notify:  make(chan struct{}),
 		mm:      mm,
 	}
@@ -28,12 +29,20 @@ func NewDeviceMonitor(mm *memory_manager.MemoryManager) *DeviceMonitor {
 
 // List all devices
 func (d *DeviceMonitor) List() error {
-	for _, dev := range d.mm.ColocMemoryList {
-		d.devices = append(d.devices, &pluginapi.Device{
-			ID:     dev,
+	// for _, dev := range d.mm.ColocMemoryList {
+	// 	d.devices = append(d.devices, &pluginapi.Device{
+	// 		ID:     dev,
+	// 		Health: pluginapi.Healthy,
+	// 	})
+	// }
+
+	for _, dev := range d.mm.ColocMemoryMap {
+		d.devices[dev.Uuid] = &pluginapi.Device{
+			ID:     dev.Uuid,
 			Health: pluginapi.Healthy,
-		})
+		}
 	}
+
 	return nil
 }
 
@@ -50,7 +59,7 @@ func (d *DeviceMonitor) Watch() error {
 			klog.Errorf("[Watch] 调整设备失败: %v", err)
 			return errors.WithMessagef(err, "调整设备失败")
 		}
-		klog.Info("[Watch] 混部内存更新: ", d.mm.ColocMemoryList[len(d.mm.ColocMemoryList)-3:], d.mm.PrevBlocks)
+		klog.Info("[Watch] 混部内存块数量: ", d.mm.PrevBlocks)
 	}
 
 	return nil
@@ -69,26 +78,44 @@ func (d *DeviceMonitor) adjustDevices() error {
 	case delta > 0:
 		// 增加块
 		// TODO: 内存增加时，先看看在用池化内存的pod有没有可以换入的
-		for i := range delta {
-			newDeviceID := fmt.Sprintf(common.DeviceName, i+d.mm.PrevBlocks)
-			d.mm.ColocMemoryList = append(d.mm.ColocMemoryList, newDeviceID)
-			d.devices = append(d.devices, &pluginapi.Device{
+		for range delta {
+			// newDeviceID := fmt.Sprintf(common.DeviceName, i+d.mm.PrevBlocks)
+			// d.mm.ColocMemoryList = append(d.mm.ColocMemoryList, newDeviceID)
+			newDeviceID := fmt.Sprintf(common.DeviceName, utils.GetUuid())
+			d.mm.ColocMemoryMap[newDeviceID] = memory_manager.ColocMemoryBlockMetaData{
+				Uuid:         newDeviceID,
+				Used:         false,
+				GenerateTime: time.Now(),
+			}
+			d.devices[newDeviceID] = &pluginapi.Device{
 				ID:     newDeviceID,
 				Health: pluginapi.Healthy,
-			})
+			}
 		}
 		d.notify <- struct{}{}
 		klog.Info("[adjustDevices] 增加设备数量: ", delta)
 	case delta < 0:
-		// 减少块（从尾部移除）
+		// 减少块
 		// TODO: 内存减少时，得用env来检查有没有不够用的pod，把pod换入CXL或兜底迁移
 		removeCount := -delta
-		if removeCount > len(d.mm.ColocMemoryList) {
-			d.mm.ColocMemoryList = d.mm.ColocMemoryList[:0]
-			d.devices = d.devices[:0]
-		} else {
-			d.mm.ColocMemoryList = d.mm.ColocMemoryList[:len(d.mm.ColocMemoryList)-removeCount]
-			d.devices = d.devices[:len(d.devices)-removeCount]
+		// if removeCount > len(d.mm.ColocMemoryList) {
+		// 	d.mm.ColocMemoryList = d.mm.ColocMemoryList[:0]
+		// 	d.devices = d.devices[:0]
+		// } else {
+		// 	d.mm.ColocMemoryList = d.mm.ColocMemoryList[:len(d.mm.ColocMemoryList)-removeCount]
+		// 	d.devices = d.devices[:len(d.devices)-removeCount]
+		// }
+
+		// 在d.mm.ColocMemoryMap中找到Used == false的块并删除
+		for range removeCount {
+			for k, v := range d.mm.ColocMemoryMap {
+				if !v.Used {
+					klog.Info("[adjustDevices] 删除设备:", d.mm.ColocMemoryMap[k])
+					delete(d.mm.ColocMemoryMap, k)
+					delete(d.devices, k)
+					break
+				}
+			}
 		}
 		d.notify <- struct{}{}
 		klog.Info("[adjustDevices] 移除设备数量: ", removeCount)
@@ -101,8 +128,13 @@ func (d *DeviceMonitor) adjustDevices() error {
 	return nil
 }
 
+// Devices transformer map to slice
 func (d *DeviceMonitor) Devices() []*pluginapi.Device {
-	return d.devices
+	devices := make([]*pluginapi.Device, 0, len(d.devices))
+	for _, device := range d.devices {
+		devices = append(devices, device)
+	}
+	return devices
 }
 
 func String(devs []*pluginapi.Device) string {

@@ -14,23 +14,31 @@ date:2025-3-19
 import (
 	"fmt"
 	"liuyang/colocation-memory-device-plugin/pkg/common"
+	"liuyang/colocation-memory-device-plugin/pkg/utils"
 	"path"
+	"time"
 
 	"k8s.io/klog/v2"
 )
 
+type ColocMemoryBlockMetaData struct {
+	Uuid         string    // 设备ID
+	Used         bool      // 是否使用
+	GenerateTime time.Time // 生成时间
+}
+
 type MemoryManager struct {
-	TotalMemory     uint64   // 系统总内存 (NUMA0 + NUMA1)
-	OnlinePodsUsed  uint64   // 在线任务内存使用量
-	SafetyMargin    uint64   // 安全水位
-	ColocMemory     uint64   // 可用混部内存
-	ColocMemoryList []string // 混部内存虚拟块队列 = 可用混部内存 / BlockSize
-	PrevBlocks      int      // 用于维护先前的混部内存虚拟块数
+	TotalMemory    uint64                              // 系统总内存 (NUMA0 + NUMA1)
+	OnlinePodsUsed uint64                              // 在线任务内存使用量
+	SafetyMargin   uint64                              // 安全水位
+	ColocMemory    uint64                              // 可用混部内存
+	ColocMemoryMap map[string]ColocMemoryBlockMetaData // Uuid -> ColocMemoryBlockMetaData,维护混部内存块元数据
+	PrevBlocks     int                                 // 用于维护先前的混部内存虚拟块数
 }
 
 func NewMemoryManager() *MemoryManager {
 	mm := &MemoryManager{
-		ColocMemoryList: make([]string, 0),
+		ColocMemoryMap: make(map[string]ColocMemoryBlockMetaData),
 	}
 	err := mm.Initialize()
 	if err != nil {
@@ -41,16 +49,21 @@ func NewMemoryManager() *MemoryManager {
 
 // 初始化内存信息
 func (m *MemoryManager) Initialize() error {
-
 	m.UpdateState()
 	// 计算初始块数
 	currentBlocks := int(m.ColocMemory / common.BlockSize)
-	for i := range currentBlocks {
-		m.ColocMemoryList = append(m.ColocMemoryList, fmt.Sprintf(common.DeviceName, i))
+	for range currentBlocks {
+		// m.ColocMemoryList = append(m.ColocMemoryList, fmt.Sprintf(common.DeviceName, i))
+		blockUuid := fmt.Sprintf(common.DeviceName, utils.GetUuid())
+		m.ColocMemoryMap[blockUuid] = ColocMemoryBlockMetaData{
+			Uuid:         blockUuid,
+			Used:         false,
+			GenerateTime: time.Now(),
+		}
 	}
 	// 记录上次块数
 	m.PrevBlocks = currentBlocks
-	klog.Infof("[NewMemoryManager] 初始化内存信息: 系统总内存=%d, 在线任务内存=%d, 安全水位=%d\n", m.TotalMemory, m.OnlinePodsUsed, m.SafetyMargin)
+	klog.Info("[NewMemoryManager] 初始化内存信息: ", m.ColocMemoryMap)
 	return nil
 }
 

@@ -4,6 +4,7 @@ go 1.24.1
 
 require (
 	github.com/fsnotify/fsnotify v1.7.0
+	github.com/google/uuid v1.6.0
 	github.com/pkg/errors v0.9.1
 	google.golang.org/grpc v1.58.3
 	k8s.io/klog/v2 v2.130.1
