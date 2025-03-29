@@ -13,4 +13,5 @@ const (
 	BurstablePath          = "/kubepods-burstable.slice/memory.current"
 	BestEffortPath         = "/kubepods-besteffort.slice/memory.current"
 	RefreshInterval        = 5 * time.Second
+	DeviceName             = "CM%d" // 设备名称
 )

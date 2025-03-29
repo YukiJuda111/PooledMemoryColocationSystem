@@ -46,7 +46,7 @@ func (m *MemoryManager) Initialize() error {
 	// 计算初始块数
 	currentBlocks := int(m.ColocMemory / common.BlockSize)
 	for i := range currentBlocks {
-		m.ColocMemoryList = append(m.ColocMemoryList, fmt.Sprintf("colocationMemory%d", i))
+		m.ColocMemoryList = append(m.ColocMemoryList, fmt.Sprintf(common.DeviceName, i))
 	}
 	// 记录上次块数
 	m.PrevBlocks = currentBlocks
