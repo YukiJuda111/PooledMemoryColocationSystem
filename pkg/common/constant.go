@@ -3,7 +3,7 @@ package common
 import "time"
 
 const (
-	ResourceName    string = "liuyang.io/colocation-memory"
+	ResourceName    string = "xxx.com/colocation-memory"
 	DeviceSocket    string = "colocation-memory.sock"
 	ConnectTimeout         = time.Second * 5
 	BlockSize              = 512 * 1024 * 1024 // 512MB
@@ -12,5 +12,6 @@ const (
 	BurstablePath          = "/kubepods-burstable.slice/memory.current"
 	BestEffortPath         = "/kubepods-besteffort.slice/memory.current"
 	RefreshInterval        = time.Second * 5
-	DeviceName             = "CM%s" // 设备名称
+	DeviceName             = "CM-%s"                // 设备名称
+	KubeConfigPath         = "/home/liuyang/config" // kubeconfig路径
 )

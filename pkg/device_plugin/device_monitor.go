@@ -36,7 +36,7 @@ func (d *DeviceMonitor) List() error {
 	// 	})
 	// }
 
-	for _, dev := range d.mm.ColocMemoryMap {
+	for _, dev := range d.mm.Uuid2ColocMetaData {
 		d.devices[dev.Uuid] = &pluginapi.Device{
 			ID:     dev.Uuid,
 			Health: pluginapi.Healthy,
@@ -82,10 +82,11 @@ func (d *DeviceMonitor) adjustDevices() error {
 			// newDeviceID := fmt.Sprintf(common.DeviceName, i+d.mm.PrevBlocks)
 			// d.mm.ColocMemoryList = append(d.mm.ColocMemoryList, newDeviceID)
 			newDeviceID := fmt.Sprintf(common.DeviceName, utils.GetUuid())
-			d.mm.ColocMemoryMap[newDeviceID] = memory_manager.ColocMemoryBlockMetaData{
-				Uuid:         newDeviceID,
-				Used:         false,
-				GenerateTime: time.Now(),
+			d.mm.Uuid2ColocMetaData[newDeviceID] = &memory_manager.ColocMemoryBlockMetaData{
+				Uuid:       newDeviceID,
+				Used:       false,
+				BindPod:    "",
+				UpdateTime: time.Now(),
 			}
 			d.devices[newDeviceID] = &pluginapi.Device{
 				ID:     newDeviceID,
@@ -96,7 +97,6 @@ func (d *DeviceMonitor) adjustDevices() error {
 		klog.Info("[adjustDevices] 增加设备数量: ", delta)
 	case delta < 0:
 		// 减少块
-		// TODO: 内存减少时，得用env来检查有没有不够用的pod，把pod换入CXL或兜底迁移
 		removeCount := -delta
 		// if removeCount > len(d.mm.ColocMemoryList) {
 		// 	d.mm.ColocMemoryList = d.mm.ColocMemoryList[:0]
@@ -108,13 +108,14 @@ func (d *DeviceMonitor) adjustDevices() error {
 
 		// 在d.mm.ColocMemoryMap中找到Used == false的块并删除
 		for range removeCount {
-			for k, v := range d.mm.ColocMemoryMap {
+			for k, v := range d.mm.Uuid2ColocMetaData {
 				if !v.Used {
-					klog.Info("[adjustDevices] 删除设备:", d.mm.ColocMemoryMap[k])
-					delete(d.mm.ColocMemoryMap, k)
+					klog.Info("[adjustDevices] 删除设备:", d.mm.Uuid2ColocMetaData[k])
+					delete(d.mm.Uuid2ColocMetaData, k)
 					delete(d.devices, k)
 					break
 				}
+				// TODO: 如果没有找到Used == false的块，直接删除used === true的块，然后根据维护信息把块对应的pod扔到cxl / 迁移
 			}
 		}
 		d.notify <- struct{}{}

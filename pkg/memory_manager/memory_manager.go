@@ -22,23 +22,28 @@ import (
 )
 
 type ColocMemoryBlockMetaData struct {
-	Uuid         string    // 设备ID
-	Used         bool      // 是否使用
-	GenerateTime time.Time // 生成时间
+	Uuid       string    // 设备ID
+	Used       bool      // 是否使用
+	BindPod    string    // 绑定的POD
+	UpdateTime time.Time // 更新时间
 }
 
 type MemoryManager struct {
-	TotalMemory    uint64                              // 系统总内存 (NUMA0 + NUMA1)
-	OnlinePodsUsed uint64                              // 在线任务内存使用量
-	SafetyMargin   uint64                              // 安全水位
-	ColocMemory    uint64                              // 可用混部内存
-	ColocMemoryMap map[string]ColocMemoryBlockMetaData // Uuid -> ColocMemoryBlockMetaData,维护混部内存块元数据
-	PrevBlocks     int                                 // 用于维护先前的混部内存虚拟块数
+	TotalMemory        uint64                               // 系统总内存 (NUMA0 + NUMA1)
+	OnlinePodsUsed     uint64                               // 在线任务内存使用量
+	SafetyMargin       uint64                               // 安全水位
+	ColocMemory        uint64                               // 可用混部内存
+	Uuid2ColocMetaData map[string]*ColocMemoryBlockMetaData // Uuid -> ColocMemoryBlockMetaData,维护混部内存块元数据
+	PrevBlocks         int                                  // 用于维护先前的混部内存虚拟块数
+
+	// TODO: Pod2ColocIds和Uuid2ColocMetaData可以放在数据库里维护，这样可以更健壮
+	Pod2ColocIds map[string][]string // PodName -> ColocMemoryBlockId
 }
 
 func NewMemoryManager() *MemoryManager {
 	mm := &MemoryManager{
-		ColocMemoryMap: make(map[string]ColocMemoryBlockMetaData),
+		Uuid2ColocMetaData: make(map[string]*ColocMemoryBlockMetaData),
+		Pod2ColocIds:       make(map[string][]string),
 	}
 	err := mm.Initialize()
 	if err != nil {
@@ -55,15 +60,19 @@ func (m *MemoryManager) Initialize() error {
 	for range currentBlocks {
 		// m.ColocMemoryList = append(m.ColocMemoryList, fmt.Sprintf(common.DeviceName, i))
 		blockUuid := fmt.Sprintf(common.DeviceName, utils.GetUuid())
-		m.ColocMemoryMap[blockUuid] = ColocMemoryBlockMetaData{
-			Uuid:         blockUuid,
-			Used:         false,
-			GenerateTime: time.Now(),
+		m.Uuid2ColocMetaData[blockUuid] = &ColocMemoryBlockMetaData{
+			Uuid:       blockUuid,
+			Used:       false,
+			BindPod:    "",
+			UpdateTime: time.Now(),
 		}
 	}
 	// 记录上次块数
 	m.PrevBlocks = currentBlocks
-	klog.Info("[NewMemoryManager] 初始化内存信息: ", m.ColocMemoryMap)
+
+	// 监听k8s的pod事件
+	go m.WatchPods()
+	klog.Info("[NewMemoryManager] 初始化内存信息: ", m.Uuid2ColocMetaData)
 	return nil
 }
 

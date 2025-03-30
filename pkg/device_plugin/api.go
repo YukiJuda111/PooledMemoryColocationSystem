@@ -2,6 +2,7 @@ package device_plugin
 
 import (
 	"context"
+	"liuyang/colocation-memory-device-plugin/pkg/common"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -19,9 +20,6 @@ func (c *ColocationMemoryDevicePlugin) GetDevicePluginOptions(_ context.Context,
 // Whenever a Device state change or a Device disappears, ListAndWatch
 // returns the new list
 // 这里上报的不是内存总量，而是排除了在线任务和安全水位后的内存余量
-// 增加：append到尾部
-// 减少：从尾到头删除
-// 申请：从头到尾申请
 func (c *ColocationMemoryDevicePlugin) ListAndWatch(_ *pluginapi.Empty, srv pluginapi.DevicePlugin_ListAndWatchServer) error {
 	devs := c.dm.Devices()
 	klog.Info("[ListAndWatch] number of init devices: ", len(devs))
@@ -48,7 +46,7 @@ func (c *ColocationMemoryDevicePlugin) ListAndWatch(_ *pluginapi.Empty, srv plug
 func (c *ColocationMemoryDevicePlugin) GetPreferredAllocation(_ context.Context, _ *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
 	// 这里的逻辑不生效，改成在MemoryManager中维护算了...
 	// 好处：双向维护
-	// 弊端：一致性怎么保证
+	// 弊端：一致性怎么保证 （pods_monitor.go监听pod创建和删除事件，内存块的Used和BindPod字段会被更新）
 	return &pluginapi.PreferredAllocationResponse{}, nil
 
 	// var containerResponses []*pluginapi.ContainerPreferredAllocationResponse
@@ -88,9 +86,23 @@ func (c *ColocationMemoryDevicePlugin) Allocate(_ context.Context, reqs *plugina
 	ret := &pluginapi.AllocateResponse{}
 	for _, req := range reqs.ContainerRequests {
 		klog.Infof("[Allocate] received request: %v", strings.Join(req.DevicesIDs, ","))
+
+		// 把该设备id的metaData标记为Used = true
+
+		// for _, id := range req.DevicesIDs {
+		// 	if _, ok := c.dm.mm.ColocMemoryMap[id]; !ok {
+		// 		return nil, errors.Errorf("device %s not found", id)
+		// 	}
+		// 	c.dm.mm.ColocMemoryMap[id].Used = true
+		// 	c.dm.mm.ColocMemoryMap[id].BindPod = req.ContainerId
+		// }
+
+		// TODO: 给pod设置一个cgroups
+
+		// pod环境变量里面绑定uuids
 		resp := pluginapi.ContainerAllocateResponse{
 			Envs: map[string]string{
-				"ColocationMemory": strings.Join(req.DevicesIDs, ","),
+				common.ResourceName: strings.Join(req.DevicesIDs, ","),
 			},
 		}
 		ret.ContainerResponses = append(ret.ContainerResponses, &resp)
