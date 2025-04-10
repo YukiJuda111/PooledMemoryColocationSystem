@@ -34,25 +34,25 @@ func (m *MemoryManager) WatchPods() {
 	// 加载 kubeconfig
 	config, err := clientcmd.BuildConfigFromFlags("", common.KubeConfigPath) // 修改路径
 	if err != nil {
-		klog.Fatal("[WatchPods] ", err)
+		klog.Error("[WatchPods] ", err)
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		klog.Fatal("[WatchPods] ", err)
+		klog.Error("[WatchPods] ", err)
 	}
 
 	// 监听default的 Pod 事件
 	// TODO: 后续混部任务可能有个专门的namespace: "colocation-memory"
 	watcher, err := clientset.CoreV1().Pods("default").Watch(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		klog.Fatal("[WatchPods] ", err)
+		klog.Error("[WatchPods] ", err)
 	}
 	defer watcher.Stop()
 	for event := range watcher.ResultChan() {
 		pod, ok := event.Object.(*v1.Pod)
 		if !ok {
-			klog.Fatal("[WatchPods] unexpected type")
+			klog.Error("[WatchPods] unexpected type")
 			continue
 		}
 
@@ -60,7 +60,6 @@ func (m *MemoryManager) WatchPods() {
 		// TODO: 这里会先监听历史的Pod创建事件，再持续监听新的Pod创建事件，后面在Pod换出池化内存时注意下，可能Pod维护的环境变量里面有CM-xxxx，但实际在mm.Uuid2ColocMetaData中已经被删除
 		case watch.Added:
 			m.handlePodAdded(clientset, pod.Namespace, pod.Name)
-
 		case watch.Deleted:
 			m.handlePodDeleted(pod.Name)
 		}
@@ -80,14 +79,14 @@ func (m *MemoryManager) waitForPodAndFetchDevIds(clientset *kubernetes.Clientset
 	})
 
 	if err != nil {
-		klog.Fatalf("[waitForPodAndFetchEnv] Error waiting for Pod %s/%s to be Running: %v\n", namespace, podName, err)
+		klog.Errorf("[waitForPodAndFetchEnv] Error waiting for Pod %s/%s to be Running: %v\n", namespace, podName, err)
 		return
 	}
 
 	// 执行 `kubectl exec` 获取环境变量
 	envVars, err := m.getPodEnvVars(config, namespace, podName)
 	if err != nil {
-		klog.Fatalf("[waitForPodAndFetchEnv] Failed to get environment variables from Pod %s/%s: %v\n", namespace, podName, err)
+		klog.Errorf("[waitForPodAndFetchEnv] Failed to get environment variables from Pod %s/%s: %v\n", namespace, podName, err)
 		return
 	}
 	m.processPodEnvVars(envVars, podName)
