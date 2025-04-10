@@ -87,16 +87,6 @@ func (c *ColocationMemoryDevicePlugin) Allocate(_ context.Context, reqs *plugina
 	for _, req := range reqs.ContainerRequests {
 		klog.Infof("[Allocate] received request: %v", strings.Join(req.DevicesIDs, ","))
 
-		// 把该设备id的metaData标记为Used = true
-
-		// for _, id := range req.DevicesIDs {
-		// 	if _, ok := c.dm.mm.ColocMemoryMap[id]; !ok {
-		// 		return nil, errors.Errorf("device %s not found", id)
-		// 	}
-		// 	c.dm.mm.ColocMemoryMap[id].Used = true
-		// 	c.dm.mm.ColocMemoryMap[id].BindPod = req.ContainerId
-		// }
-
 		// TODO: 给pod设置一个cgroups
 
 		// pod环境变量里面绑定uuids

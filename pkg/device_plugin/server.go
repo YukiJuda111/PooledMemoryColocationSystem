@@ -62,7 +62,6 @@ func (c *ColocationMemoryDevicePlugin) Run() error {
 	go c.server.Serve(sock)
 
 	// Wait for server to start by launching a blocking connection
-	// TODO: 这里路径看看是不是有问题
 	conn, err := connect(common.DeviceSocket, 5*time.Second)
 	if err != nil {
 		return err

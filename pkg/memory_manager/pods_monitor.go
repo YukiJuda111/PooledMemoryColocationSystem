@@ -57,25 +57,12 @@ func (m *MemoryManager) WatchPods() {
 		}
 
 		switch event.Type {
-		// TODO: 这里会先监听历史的Pod创建事件，再持续监听新的Pod创建事件，后面在Pod换出池化内存时注意下，可能Pod维护的环境变量里面有CM-xxxx，但实际在mm.ColocMemoryMap中已经被删除
+		// TODO: 这里会先监听历史的Pod创建事件，再持续监听新的Pod创建事件，后面在Pod换出池化内存时注意下，可能Pod维护的环境变量里面有CM-xxxx，但实际在mm.Uuid2ColocMetaData中已经被删除
 		case watch.Added:
-			klog.Infof("[WatchPods] Pod created: %s/%s\n", pod.Namespace, pod.Name)
-
-			// 等待 Pod 进入 Running 状态
-			go m.waitForPodAndFetchDevIds(clientset, common.KubeConfigPath, pod.Namespace, pod.Name)
+			m.handlePodAdded(clientset, pod.Namespace, pod.Name)
 
 		case watch.Deleted:
-			klog.Infof("[WatchPods] Pod deleted: %s/%s\n", pod.Namespace, pod.Name)
-
-			// 更新设备的元数据
-			for _, devId := range m.Pod2ColocIds[pod.Name] {
-				m.Uuid2ColocMetaData[devId].BindPod = ""
-				m.Uuid2ColocMetaData[devId].Used = false
-				m.Uuid2ColocMetaData[devId].UpdateTime = time.Now()
-			}
-			// 删除 Pod 和设备 ID 的映射关系
-			delete(m.Pod2ColocIds, pod.Name)
-			klog.Info("[WatchPods] Pod2ColocIds: ", m.Pod2ColocIds)
+			m.handlePodDeleted(pod.Name)
 		}
 	}
 }
@@ -103,30 +90,7 @@ func (m *MemoryManager) waitForPodAndFetchDevIds(clientset *kubernetes.Clientset
 		klog.Fatalf("[waitForPodAndFetchEnv] Failed to get environment variables from Pod %s/%s: %v\n", namespace, podName, err)
 		return
 	}
-
-	if _, ok := envVars[common.ResourceName]; !ok {
-		klog.Errorf("[waitForPodAndFetchEnv] Pod %s/%s does not have environment variable %s\n", namespace, podName, common.ResourceName)
-		return
-	}
-
-	// 解析环境变量，获取设备 ID
-	devIds := strings.Split(envVars[common.ResourceName], ",")
-	klog.Infof("[waitForPodAndFetchEnv] Pod %s/%s has environment variable %s: %v\n", namespace, podName, common.ResourceName, devIds)
-
-	// devIds添加到mm.ColocMemoryMap中
-	for _, devId := range devIds {
-		if _, ok := m.Uuid2ColocMetaData[devId]; !ok {
-			klog.Infof("[waitForPodAndFetchEnv] Device %s not found in ColocMemoryMap\n", devId)
-			continue
-		}
-		// 更新设备的元数据
-		m.Uuid2ColocMetaData[devId].BindPod = podName
-		m.Uuid2ColocMetaData[devId].Used = true
-		m.Uuid2ColocMetaData[devId].UpdateTime = time.Now()
-		// 记录 Pod 和设备 ID 的映射关系
-		m.Pod2ColocIds[podName] = append(m.Pod2ColocIds[podName], devId)
-		klog.Infof("[waitForPodAndFetchEnv] Device %s bound to Pod %s/%s\n", devId, namespace, podName)
-	}
+	m.processPodEnvVars(envVars, podName)
 
 	klog.Info("[waitForPodAndFetchEnv] Pod2ColocIds: ", m.Pod2ColocIds)
 
@@ -158,4 +122,51 @@ func (m *MemoryManager) getPodEnvVars(kubeconfig, namespace, podName string) (ma
 	}
 
 	return envVars, nil
+}
+
+// 处理 Pod 的环境变量
+func (m *MemoryManager) processPodEnvVars(envVars map[string]string, podName string) {
+	if resource, ok := envVars[common.ResourceName]; ok {
+		devIds := strings.SplitSeq(resource, ",")
+		for devId := range devIds {
+			m.updateDeviceMetadata(devId, podName, true)
+			m.Pod2ColocIds[podName] = append(m.Pod2ColocIds[podName], devId)
+			klog.Infof("[processPodEnvVars] Device %s bound to Pod %s", devId, podName)
+		}
+		klog.Infof("[processPodEnvVars] Updated Pod2ColocIds: %v", m.Pod2ColocIds)
+	} else {
+		klog.Errorf("[processPodEnvVars] Pod %s does not have environment variable %s", podName, common.ResourceName)
+	}
+}
+
+// 更新设备元数据
+func (m *MemoryManager) updateDeviceMetadata(devId, podName string, used bool) {
+	if meta, ok := m.Uuid2ColocMetaData[devId]; ok {
+		meta.BindPod = podName
+		meta.Used = used
+		meta.UpdateTime = time.Now()
+	}
+}
+
+// 删除 Pod 和设备 ID 的映射关系
+func (m *MemoryManager) removePodDeviceMapping(podName string) {
+	if devIds, ok := m.Pod2ColocIds[podName]; ok {
+		for _, devId := range devIds {
+			m.updateDeviceMetadata(devId, "", false)
+		}
+		delete(m.Pod2ColocIds, podName)
+		klog.Infof("[removePodDeviceMapping] Removed mapping for Pod %s: %v", podName, devIds)
+	}
+}
+
+// 处理 Pod 创建事件
+func (m *MemoryManager) handlePodAdded(clientset *kubernetes.Clientset, namespace, podName string) {
+	klog.Infof("[handlePodAdded] Pod created: %s/%s", namespace, podName)
+	go m.waitForPodAndFetchDevIds(clientset, common.KubeConfigPath, namespace, podName)
+}
+
+// 处理 Pod 删除事件
+func (m *MemoryManager) handlePodDeleted(podName string) {
+	klog.Infof("[handlePodDeleted] Pod deleted: %s", podName)
+	m.removePodDeviceMapping(podName)
 }

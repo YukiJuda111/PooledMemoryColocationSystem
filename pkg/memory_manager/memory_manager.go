@@ -36,7 +36,7 @@ type MemoryManager struct {
 	Uuid2ColocMetaData map[string]*ColocMemoryBlockMetaData // Uuid -> ColocMemoryBlockMetaData,维护混部内存块元数据
 	PrevBlocks         int                                  // 用于维护先前的混部内存虚拟块数
 
-	// TODO: Pod2ColocIds和Uuid2ColocMetaData可以放在数据库里维护，这样可以更健壮
+	// TODO: Pod2ColocIds和Uuid2ColocMetaData可以放在数据库里维护
 	Pod2ColocIds map[string][]string // PodName -> ColocMemoryBlockId
 }
 
