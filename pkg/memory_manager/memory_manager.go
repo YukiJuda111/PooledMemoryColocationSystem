@@ -37,7 +37,8 @@ type MemoryManager struct {
 	PrevBlocks         int                                  // 用于维护先前的混部内存虚拟块数
 
 	// TODO: Pod2ColocIds和Uuid2ColocMetaData可以放在数据库里维护
-	Pod2ColocIds map[string][]string // PodName -> ColocMemoryBlockId
+	Pod2ColocIds   map[string][]string // PodName -> ColocMemoryBlockId
+	LastUpdateTime time.Time           // 上次更新时间
 }
 
 func NewMemoryManager() *MemoryManager {

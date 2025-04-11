@@ -74,6 +74,19 @@ func (d *DeviceMonitor) adjustDevices() error {
 	currentBlocks := int(d.mm.ColocMemory / common.BlockSize)
 	delta := currentBlocks - d.mm.PrevBlocks
 
+	// 滞后区间
+	if delta >= -common.DebounceThreshold && delta <= common.DebounceThreshold {
+		klog.Info("[adjustDevices] 防抖: 设备数量变化小于阈值，不做扩缩")
+		return nil
+	}
+
+	// 冷却保护
+	now := time.Now()
+	if !d.mm.LastUpdateTime.IsZero() && now.Sub(d.mm.LastUpdateTime) < common.MinAdjustmentInterval {
+		klog.Infof("[adjustDevices] 防抖: 两次调整间隔小于 %v,不做扩缩", common.MinAdjustmentInterval)
+		return nil
+	}
+
 	switch {
 	case delta > 0:
 		// 增加块
@@ -126,6 +139,7 @@ func (d *DeviceMonitor) adjustDevices() error {
 	}
 
 	d.mm.PrevBlocks = currentBlocks
+	d.mm.LastUpdateTime = time.Now()
 	return nil
 }
 
