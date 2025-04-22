@@ -16,7 +16,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"liuyang/colocation-memory-device-plugin/pkg/common"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -90,10 +92,52 @@ func (m *MemoryManager) waitForPodAndFetchDevIds(clientset *kubernetes.Clientset
 		klog.Errorf("[waitForPodAndFetchEnv] Failed to get environment variables from Pod %s/%s: %v\n", namespace, podName, err)
 		return
 	}
-	m.processPodEnvVars(envVars, podName)
-	m.inspectPodCgroup(podName)
+	numOfDevices := m.processPodEnvVars(envVars, podName)
+	pid := m.inspectPodCgroup(podName)
+	m.setCgroupsMemoryLimit(pid, common.BlockSize*numOfDevices)
 
 	klog.Info("[waitForPodAndFetchEnv] Pod2ColocIds: ", m.Pod2ColocIds)
+}
+
+func (m *MemoryManager) setCgroupsMemoryLimit(pid int, limit int) {
+	cgroupFile := fmt.Sprintf("/proc/%s/cgroup", fmt.Sprintf("%d", pid))
+	data, err := os.ReadFile(cgroupFile)
+	if err != nil {
+		klog.Error("[setCgroupsMemoryLimit] ", err)
+		return
+	}
+	klog.Info("[setCgroupsMemoryLimit] Read cgroup file: ", string(data))
+
+	var cgroupPath string
+	lines := strings.SplitSeq(string(data), "\n")
+	for line := range lines {
+		if strings.HasPrefix(line, "0::") {
+			parts := strings.Split(line, ":")
+			if len(parts) == 3 {
+				cgroupPath = parts[2]
+			}
+			break
+		}
+	}
+
+	if cgroupPath == "" {
+		klog.Error("[setCgroupsMemoryLimit] Failed to find cgroup path for PID ", pid)
+		return
+	}
+
+	// 为了防止OOM容器重启后memory.max被重置，这里设置的是父目录的memory.max
+	// 例如cgroup是/sys/fs/cgroup/kubepods.slice/kubepods-besteffort.slice/kubepods-besteffort-podc02daf39_1e4d_448a_a551_1a6080a293ac.slice/cri-containerd-f83b2fb4148c0269b10e181fcae93693c2a1259fa37b0fe2a88937e0f26e9470.scope
+	// 那么应该设置kubepods-besteffort-podc02daf39_1e4d_448a_a551_1a6080a293ac.slice下的memory.max
+
+	fullPath := filepath.Join("/sys/fs/cgroup", cgroupPath)
+	parentDir := filepath.Dir(fullPath)
+	err = os.WriteFile(filepath.Join(parentDir, "memory.max"), fmt.Appendf(nil, "%d", limit), 0644)
+	if err != nil {
+		klog.Error("[setCgroupsMemoryLimit] ", err)
+		return
+	}
+
+	klog.Infof("[setCgroupsMemoryLimit] Set memory limit for PID %d to %d bytes", pid, limit)
 }
 
 // 执行 `kubectl exec` 命令，获取 Pod 内的环境变量
@@ -125,44 +169,48 @@ func (m *MemoryManager) getPodEnvVars(kubeconfig, namespace, podName string) (ma
 }
 
 // 处理 Pod 的环境变量
-func (m *MemoryManager) processPodEnvVars(envVars map[string]string, podName string) {
+func (m *MemoryManager) processPodEnvVars(envVars map[string]string, podName string) int {
+	cnt := 0
 	if resource, ok := envVars[common.ResourceName]; ok {
 		devIds := strings.SplitSeq(resource, ",")
 		for devId := range devIds {
 			m.updateDeviceMetadata(devId, podName, true)
 			m.Pod2ColocIds[podName] = append(m.Pod2ColocIds[podName], devId)
 			klog.Infof("[processPodEnvVars] Device %s bound to Pod %s", devId, podName)
+			cnt++
 		}
 		klog.Infof("[processPodEnvVars] Updated Pod2ColocIds: %v", m.Pod2ColocIds)
 	} else {
 		klog.Errorf("[processPodEnvVars] Pod %s does not have environment variable %s", podName, common.ResourceName)
 	}
+	return cnt
 }
 
-func (m *MemoryManager) inspectPodCgroup(podName string) {
+func (m *MemoryManager) inspectPodCgroup(podName string) int {
 	containers, err := m.listRunningContainers()
 	if err != nil {
 		klog.Errorf("[inspectPodCgroup] %v", err)
-		return
+		return -1
 	}
 
 	containerID, err := m.findContainerForPod(containers, podName)
 	if err != nil {
 		klog.Errorf("[inspectPodCgroup] %v", err)
-		return
+		return -1
 	}
 
 	pid, err := m.getContainerPid(containerID)
 	if err != nil {
 		klog.Errorf("[inspectPodCgroup] %v", err)
-		return
+		return -1
 	}
 
 	m.Pod2Pids[podName] = append(m.Pod2Pids[podName], pid)
 	klog.Infof("[inspectPodCgroup] Found PID %d for container %s in pod %s", pid, containerID, podName)
+	return pid
 }
 
-func (m *MemoryManager) listRunningContainers() ([]map[string]interface{}, error) {
+func (m *MemoryManager) listRunningContainers() ([]map[string]any, error) {
 	cmd := exec.Command("crictl", "ps", "-o", "json")
 	output, err := cmd.Output()
 	if err != nil {
@@ -170,7 +218,7 @@ func (m *MemoryManager) listRunningContainers() ([]map[string]interface{}, error
 	}
 
 	var result struct {
-		Containers []map[string]interface{} `json:"containers"`
+		Containers []map[string]any `json:"containers"`
 	}
 	if err := json.Unmarshal(output, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse crictl ps output: %w", err)
@@ -179,10 +227,10 @@ func (m *MemoryManager) listRunningContainers() ([]map[string]interface{}, error
 	return result.Containers, nil
 }
 
-func (m *MemoryManager) findContainerForPod(containers []map[string]interface{}, podName string) (string, error) {
+func (m *MemoryManager) findContainerForPod(containers []map[string]any, podName string) (string, error) {
 	for _, c := range containers {
 		state := c["state"].(string)
-		labels := c["labels"].(map[string]interface{})
+		labels := c["labels"].(map[string]any)
 		if labels["io.kubernetes.pod.name"] == podName && state == "CONTAINER_RUNNING" {
 			return c["id"].(string), nil
 		}
