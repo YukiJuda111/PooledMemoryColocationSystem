@@ -13,6 +13,7 @@ date:2025-3-29
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"liuyang/colocation-memory-device-plugin/pkg/common"
 	"os/exec"
@@ -43,7 +44,7 @@ func (m *MemoryManager) WatchPods() {
 	}
 
 	// 监听default的 Pod 事件
-	// TODO: 后续混部任务可能有个专门的namespace: "colocation-memory"
+	// TODO: 后续混部任务有个专门的namespace: "colocation-memory"
 	watcher, err := clientset.CoreV1().Pods("default").Watch(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		klog.Error("[WatchPods] ", err)
@@ -57,7 +58,7 @@ func (m *MemoryManager) WatchPods() {
 		}
 
 		switch event.Type {
-		// TODO: 这里会先监听历史的Pod创建事件，再持续监听新的Pod创建事件，后面在Pod换出池化内存时注意下，可能Pod维护的环境变量里面有CM-xxxx，但实际在mm.Uuid2ColocMetaData中已经被删除
+		// TODO: 这里会先监听历史的Pod创建事件，再持续监听新的Pod创建事件，后面在Pod换出池化内存时注意下，可能Pod维护的环境变量里面有CM-xxxx，但实际在mm.Uuid2ColocMetaData中已经被删除 (换出的时候别忘了维护就行）
 		case watch.Added:
 			m.handlePodAdded(clientset, pod.Namespace, pod.Name)
 		case watch.Deleted:
@@ -90,9 +91,9 @@ func (m *MemoryManager) waitForPodAndFetchDevIds(clientset *kubernetes.Clientset
 		return
 	}
 	m.processPodEnvVars(envVars, podName)
+	m.inspectPodCgroup(podName)
 
 	klog.Info("[waitForPodAndFetchEnv] Pod2ColocIds: ", m.Pod2ColocIds)
-
 }
 
 // 执行 `kubectl exec` 命令，获取 Pod 内的环境变量
@@ -136,6 +137,77 @@ func (m *MemoryManager) processPodEnvVars(envVars map[string]string, podName str
 	} else {
 		klog.Errorf("[processPodEnvVars] Pod %s does not have environment variable %s", podName, common.ResourceName)
 	}
+}
+
+func (m *MemoryManager) inspectPodCgroup(podName string) {
+	containers, err := m.listRunningContainers()
+	if err != nil {
+		klog.Errorf("[inspectPodCgroup] %v", err)
+		return
+	}
+
+	containerID, err := m.findContainerForPod(containers, podName)
+	if err != nil {
+		klog.Errorf("[inspectPodCgroup] %v", err)
+		return
+	}
+
+	pid, err := m.getContainerPid(containerID)
+	if err != nil {
+		klog.Errorf("[inspectPodCgroup] %v", err)
+		return
+	}
+
+	m.Pod2Pids[podName] = append(m.Pod2Pids[podName], pid)
+	klog.Infof("[inspectPodCgroup] Found PID %d for container %s in pod %s", pid, containerID, podName)
+}
+
+func (m *MemoryManager) listRunningContainers() ([]map[string]interface{}, error) {
+	cmd := exec.Command("crictl", "ps", "-o", "json")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute crictl ps: %w", err)
+	}
+
+	var result struct {
+		Containers []map[string]interface{} `json:"containers"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse crictl ps output: %w", err)
+	}
+
+	return result.Containers, nil
+}
+
+func (m *MemoryManager) findContainerForPod(containers []map[string]interface{}, podName string) (string, error) {
+	for _, c := range containers {
+		state := c["state"].(string)
+		labels := c["labels"].(map[string]interface{})
+		if labels["io.kubernetes.pod.name"] == podName && state == "CONTAINER_RUNNING" {
+			return c["id"].(string), nil
+		}
+	}
+	return "", fmt.Errorf("no running container found for pod %s", podName)
+}
+
+func (m *MemoryManager) getContainerPid(containerID string) (int, error) {
+	cmd := exec.Command("crictl", "inspect", containerID)
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("failed to inspect container %s: %w", containerID, err)
+	}
+
+	var inspectResult struct {
+		Info struct {
+			Pid int `json:"pid"`
+		} `json:"info"`
+	}
+
+	if err := json.Unmarshal(output, &inspectResult); err != nil {
+		return 0, fmt.Errorf("failed to parse inspect output: %w", err)
+	}
+
+	return inspectResult.Info.Pid, nil
 }
 
 // 更新设备元数据

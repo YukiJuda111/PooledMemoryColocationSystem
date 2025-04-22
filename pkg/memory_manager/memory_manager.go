@@ -38,6 +38,7 @@ type MemoryManager struct {
 
 	// TODO: Pod2ColocIds和Uuid2ColocMetaData可以放在数据库里维护
 	Pod2ColocIds   map[string][]string // PodName -> ColocMemoryBlockId
+	Pod2Pids       map[string][]int    // PodName -> Pid
 	LastUpdateTime time.Time           // 上次更新时间
 }
 
@@ -45,6 +46,7 @@ func NewMemoryManager() *MemoryManager {
 	mm := &MemoryManager{
 		Uuid2ColocMetaData: make(map[string]*ColocMemoryBlockMetaData),
 		Pod2ColocIds:       make(map[string][]string),
+		Pod2Pids:           make(map[string][]int),
 	}
 	err := mm.Initialize()
 	if err != nil {

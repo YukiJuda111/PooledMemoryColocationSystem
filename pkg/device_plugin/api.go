@@ -87,7 +87,8 @@ func (c *ColocationMemoryDevicePlugin) Allocate(_ context.Context, reqs *plugina
 	for _, req := range reqs.ContainerRequests {
 		klog.Infof("[Allocate] received request: %v", strings.Join(req.DevicesIDs, ","))
 
-		// TODO: 给pod设置一个cgroups
+		// TODO: 给pod设置一个cgroups memory.max
+		// 1. 获取pod的pid: 通过crictl 在pod创建之后监听到，crictl获取pid绑定上去
 
 		// pod环境变量里面绑定uuids
 		resp := pluginapi.ContainerAllocateResponse{
