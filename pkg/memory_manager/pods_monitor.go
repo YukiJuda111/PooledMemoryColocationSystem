@@ -45,9 +45,9 @@ func (m *MemoryManager) WatchPods() {
 		klog.Error("[WatchPods] ", err)
 	}
 
-	// 监听default的 Pod 事件
-	// TODO: 后续混部任务有个专门的namespace: "colocation-memory"
-	watcher, err := clientset.CoreV1().Pods("default").Watch(context.TODO(), metav1.ListOptions{})
+	// 监听混部Pod事件
+	// 混部任务有个专门的namespace: "colocation-memory"
+	watcher, err := clientset.CoreV1().Pods("colocation-memory").Watch(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		klog.Error("[WatchPods] ", err)
 	}

@@ -2,7 +2,6 @@ package device_plugin
 
 import (
 	"context"
-	"fmt"
 	"path"
 
 	"liuyang/colocation-memory-device-plugin/pkg/common"
@@ -30,8 +29,6 @@ func (c *ColocationMemoryDevicePlugin) Register() error {
 			GetPreferredAllocationAvailable: true,
 		},
 	}
-
-	fmt.Println("RegisterRequest:", reqt)
 
 	_, err = client.Register(context.Background(), reqt)
 	if err != nil {
