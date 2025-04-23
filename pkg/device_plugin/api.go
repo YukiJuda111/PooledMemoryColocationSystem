@@ -44,7 +44,7 @@ func (c *ColocationMemoryDevicePlugin) ListAndWatch(_ *pluginapi.Empty, srv plug
 // devicemanager. It is only designed to help the devicemanager make a more
 // informed allocation decision when possible.
 func (c *ColocationMemoryDevicePlugin) GetPreferredAllocation(_ context.Context, _ *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
-	// 这里的逻辑不生效，改成在MemoryManager中维护算了...
+	// 这里的逻辑不生效，改成在MemoryManager中维护
 	// 好处：双向维护
 	// 弊端：一致性怎么保证 （pods_monitor.go监听pod创建和删除事件，内存块的Used和BindPod字段会被更新）
 	return &pluginapi.PreferredAllocationResponse{}, nil
