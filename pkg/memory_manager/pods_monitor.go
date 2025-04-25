@@ -73,6 +73,11 @@ func (m *MemoryManager) WatchPods() {
 func (m *MemoryManager) waitForPodAndFetchDevIds(clientset *kubernetes.Clientset, config string, namespace, podName string) {
 	// 等待 Pod 进入 Running 状态
 	// TODO: 有空把弃用的函数改掉
+	// 这里有个时序问题，如果在等待Pod进入running的时候还没更新ColocMetaData，device monitor的判断就会出问题
+	m.IsReady = false
+	defer func() {
+		m.IsReady = true
+	}()
 	err := wait.PollImmediate(2*time.Second, 60*time.Second, func() (bool, error) {
 		pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), podName, metav1.GetOptions{})
 		if err != nil {
@@ -94,9 +99,10 @@ func (m *MemoryManager) waitForPodAndFetchDevIds(clientset *kubernetes.Clientset
 	}
 	numOfDevices := m.processPodEnvVars(envVars, podName)
 	pid := m.inspectPodCgroup(podName)
-	m.setCgroupsMemoryLimit(pid, common.BlockSize*numOfDevices)
 
-	klog.Info("[waitForPodAndFetchEnv] Pod2ColocIds: ", m.Pod2ColocIds)
+	klog.Info("[waitForPodAndFetchEnv] Pod2PodInfo update: ", m.Pod2PodInfo[podName])
+
+	m.setCgroupsMemoryLimit(pid, common.BlockSize*numOfDevices)
 }
 
 func (m *MemoryManager) setCgroupsMemoryLimit(pid int, limit int) {
@@ -172,14 +178,21 @@ func (m *MemoryManager) getPodEnvVars(kubeconfig, namespace, podName string) (ma
 func (m *MemoryManager) processPodEnvVars(envVars map[string]string, podName string) int {
 	cnt := 0
 	if resource, ok := envVars[common.ResourceName]; ok {
+		podInfo := &PodInfo{
+			Name:         podName,
+			BindColocIds: []string{},
+			Pid:          -1,
+			SwapColocIds: []string{},
+		}
+
 		devIds := strings.SplitSeq(resource, ",")
 		for devId := range devIds {
 			m.updateDeviceMetadata(devId, podName, true)
-			m.Pod2ColocIds[podName] = append(m.Pod2ColocIds[podName], devId)
-			klog.Infof("[processPodEnvVars] Device %s bound to Pod %s", devId, podName)
+			podInfo.BindColocIds = append(podInfo.BindColocIds, devId)
 			cnt++
 		}
-		klog.Infof("[processPodEnvVars] Updated Pod2ColocIds: %v", m.Pod2ColocIds)
+
+		m.Pod2PodInfo[podName] = podInfo
 	} else {
 		klog.Errorf("[processPodEnvVars] Pod %s does not have environment variable %s", podName, common.ResourceName)
 	}
@@ -205,8 +218,7 @@ func (m *MemoryManager) inspectPodCgroup(podName string) int {
 		return -1
 	}
 
-	m.Pod2Pids[podName] = append(m.Pod2Pids[podName], pid)
-	klog.Infof("[inspectPodCgroup] Found PID %d for container %s in pod %s", pid, containerID, podName)
+	m.Pod2PodInfo[podName].Pid = pid
 	return pid
 }
 
@@ -269,13 +281,10 @@ func (m *MemoryManager) updateDeviceMetadata(devId, podName string, used bool) {
 
 // 删除 Pod 和设备 ID 的映射关系
 func (m *MemoryManager) removePodDeviceMapping(podName string) {
-	if devIds, ok := m.Pod2ColocIds[podName]; ok {
-		for _, devId := range devIds {
-			m.updateDeviceMetadata(devId, "", false)
-		}
-		delete(m.Pod2ColocIds, podName)
-		klog.Infof("[removePodDeviceMapping] Removed mapping for Pod %s: %v", podName, devIds)
+	for _, devId := range m.Pod2PodInfo[podName].BindColocIds {
+		m.updateDeviceMetadata(devId, "", false)
 	}
+	delete(m.Pod2PodInfo, podName)
 }
 
 // 处理 Pod 创建事件

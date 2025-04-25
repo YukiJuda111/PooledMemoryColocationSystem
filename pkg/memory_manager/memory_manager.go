@@ -28,6 +28,13 @@ type ColocMemoryBlockMetaData struct {
 	UpdateTime time.Time // 更新时间
 }
 
+type PodInfo struct {
+	Name         string   // Pod名称
+	BindColocIds []string // 绑定的混部内存块ID
+	Pid          int      // 进程ID
+	SwapColocIds []string // 交换到池化内存的混部内存块ID
+}
+
 type MemoryManager struct {
 	TotalMemory        uint64                               // 系统总内存 (NUMA0 + NUMA1)
 	OnlinePodsUsed     uint64                               // 在线任务内存使用量
@@ -37,16 +44,16 @@ type MemoryManager struct {
 	PrevBlocks         int                                  // 用于维护先前的混部内存虚拟块数
 
 	// TODO: Pod2ColocIds和Uuid2ColocMetaData可以放在数据库里维护
-	Pod2ColocIds   map[string][]string // PodName -> ColocMemoryBlockId
-	Pod2Pids       map[string][]int    // PodName -> Pid
+	Pod2PodInfo    map[string]*PodInfo // Pod名称 -> Pod信息
 	LastUpdateTime time.Time           // 上次更新时间
+
+	IsReady bool // 保证pods_monitor中时序不会出问题
 }
 
 func NewMemoryManager() *MemoryManager {
 	mm := &MemoryManager{
 		Uuid2ColocMetaData: make(map[string]*ColocMemoryBlockMetaData),
-		Pod2ColocIds:       make(map[string][]string),
-		Pod2Pids:           make(map[string][]int),
+		Pod2PodInfo:        make(map[string]*PodInfo),
 	}
 	err := mm.Initialize()
 	if err != nil {

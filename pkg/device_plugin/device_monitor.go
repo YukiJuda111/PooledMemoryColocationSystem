@@ -49,12 +49,17 @@ func (d *DeviceMonitor) List() error {
 
 // Watch device change
 func (d *DeviceMonitor) Watch() error {
-	klog.Infoln("watching devices")
 
 	ticker := time.NewTicker(common.RefreshInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {
+		// 这里判断IsReady，防止pods_monitor在等待Pod进入running的时候还没更新ColocMetaData
+		// 类似于锁
+		if !d.mm.IsReady {
+			klog.Info("[Watch] 有pod在创建过程中,跳过本次监控")
+			continue
+		}
 		d.mm.UpdateState()
 		if err := d.adjustDevices(); err != nil {
 			klog.Errorf("[Watch] 调整设备失败: %v", err)
@@ -74,83 +79,34 @@ func (d *DeviceMonitor) adjustDevices() error {
 	currentBlocks := int(d.mm.ColocMemory / common.BlockSize)
 	delta := currentBlocks - d.mm.PrevBlocks
 
-	// 滞后区间
-	if delta >= -common.DebounceThreshold && delta <= common.DebounceThreshold {
-		klog.Info("[adjustDevices] 防抖: 设备数量变化小于阈值，不做扩缩")
-		return nil
-	}
+	// TODO: 为了测试方便,先不做防抖,记得改回来
 
-	// 冷却保护
-	now := time.Now()
-	if !d.mm.LastUpdateTime.IsZero() && now.Sub(d.mm.LastUpdateTime) < common.MinAdjustmentInterval {
-		klog.Infof("[adjustDevices] 防抖: 两次调整间隔小于 %v,不做扩缩", common.MinAdjustmentInterval)
-		return nil
-	}
+	// // 滞后区间
+	// if delta >= -common.DebounceThreshold && delta <= common.DebounceThreshold {
+	// 	klog.Info("[adjustDevices] 防抖: 设备数量变化小于阈值，不做扩缩")
+	// 	return nil
+	// }
+
+	// // 冷却保护
+	// now := time.Now()
+	// if !d.mm.LastUpdateTime.IsZero() && now.Sub(d.mm.LastUpdateTime) < common.MinAdjustmentInterval {
+	// 	klog.Infof("[adjustDevices] 防抖: 两次调整间隔小于 %v,不做扩缩", common.MinAdjustmentInterval)
+	// 	return nil
+	// }
 
 	switch {
 	case delta > 0:
 		// 增加块
 		// TODO: 内存增加时，先看看在用池化内存的pod有没有可以换入的
 		for range delta {
-			newDeviceID := fmt.Sprintf(common.DeviceName, utils.GetUuid())
-			d.mm.Uuid2ColocMetaData[newDeviceID] = &memory_manager.ColocMemoryBlockMetaData{
-				Uuid:       newDeviceID,
-				Used:       false,
-				BindPod:    "",
-				UpdateTime: time.Now(),
-			}
-			d.devices[newDeviceID] = &pluginapi.Device{
-				ID:     newDeviceID,
-				Health: pluginapi.Healthy,
-			}
+			d.generateNewBlock()
 		}
 		d.notify <- struct{}{}
 		klog.Info("[adjustDevices] 增加设备数量: ", delta)
 	case delta < 0:
 		// 减少块
 		removeCount := -delta
-		// 在d.mm.ColocMemoryMap中找到Used == false的块并删除
-		for range removeCount {
-			found := false
-
-			for k, v := range d.mm.Uuid2ColocMetaData {
-				if !v.Used {
-					klog.Info("[adjustDevices] 删除设备:", d.mm.Uuid2ColocMetaData[k])
-					delete(d.mm.Uuid2ColocMetaData, k)
-					delete(d.devices, k)
-
-					found = true // 找到一个可以删除的块
-					break
-				}
-
-				// TODO: 如果没有找到Used == false的块，直接删除used == true的块，然后根据维护信息把块对应的pod扔到cxl / 迁移
-				// 维护了updateTime,刚好用lru来选择
-				if !found {
-					klog.Info("[adjustDevices] 没有找到可以删除的块，尝试进行池化内存迁移")
-
-					lruKey, lruMeta := d.chooseColocBlocksByLru()
-					if lruKey != "" {
-						klog.Warningf("[adjustDevices] LRU删除正在使用的设备: %v,对应pod需迁移", lruMeta)
-
-						// 迁移pod逻辑，回传error来检测是否迁移成功，保证一致性
-
-						// 可以记录 lruMeta.PodUID 到迁移列表或迁移系统
-						delete(d.mm.Uuid2ColocMetaData, lruKey)
-						delete(d.devices, lruKey)
-
-						// 因为这里的block是和pod绑定的，所以需要把这个pod的设备删除
-						if _, ok := d.mm.Pod2ColocIds[lruMeta.BindPod]; ok {
-							// 删除这个pod的设备
-							delete(d.mm.Pod2ColocIds, lruMeta.BindPod)
-							klog.Infof("[adjustDevices] 删除 %s 的设备映射关系", lruMeta.BindPod)
-						}
-					}
-
-				}
-			}
-		}
-		d.notify <- struct{}{}
-		klog.Info("[adjustDevices] 移除设备数量: ", removeCount)
+		d.removeColocDevicesMostUsed(removeCount)
 	case delta == 0:
 		// TODO: 不变
 		klog.Info("[adjustDevices] 设备数量不变")
@@ -161,113 +117,94 @@ func (d *DeviceMonitor) adjustDevices() error {
 	return nil
 }
 
-// removeColocDevicesByLru 根据 LRU 策略删除设备（优先删除未使用的设备，如果不够则按更新时间最老的设备删除）
-func (d *DeviceMonitor) removeColocDevicesByLru(removeCount int) {
-	// 目标删除数量
-	targetDeleteCount := removeCount
+func (d *DeviceMonitor) removeColocDevicesMostUsed(removeCount int) {
 	deletedCount := 0
+	targetDeleteCount := removeCount
 
-	// Step 1: 删除未使用的设备块
-	var unusedKeys []string
+	// Step 1: 收集未使用的块
+	unusedKeys := make([]string, 0, removeCount)
 	for k, v := range d.mm.Uuid2ColocMetaData {
 		if !v.Used {
 			unusedKeys = append(unusedKeys, k)
-		}
-	}
-
-	// 删除未使用的块，直到删除目标满足
-	for _, k := range unusedKeys {
-		klog.Infof("[adjustDevices] 删除未使用设备: %v", d.mm.Uuid2ColocMetaData[k])
-		delete(d.mm.Uuid2ColocMetaData, k)
-		delete(d.devices, k)
-		deletedCount++
-		if deletedCount >= targetDeleteCount {
-			break
-		}
-	}
-
-	// Step 2: 如果删除数量不够，按 LRU 删除正在使用的块
-	if deletedCount < targetDeleteCount {
-		// 收集所有正在使用的设备块，并按照更新时间进行排序
-		type usedBlockInfo struct {
-			DeviceName string
-			UpdateTime time.Time
-			BindPod    string
-		}
-		var usedBlocks []usedBlockInfo
-		usedBlock2Pod := make(map[string]string) // 用于记录每个 block 所绑定的 Pod
-
-		for k, v := range d.mm.Uuid2ColocMetaData {
-			if v.Used {
-				usedBlocks = append(usedBlocks, usedBlockInfo{
-					DeviceName: k,
-					UpdateTime: v.UpdateTime,
-					BindPod:    v.BindPod,
-				})
-				usedBlock2Pod[k] = v.BindPod
+			if len(unusedKeys) >= targetDeleteCount {
+				break
 			}
 		}
+	}
 
-		// 按更新时间升序排序，最老的 block 排前面
-		sort.Slice(usedBlocks, func(i, j int) bool {
-			return usedBlocks[i].UpdateTime.Before(usedBlocks[j].UpdateTime)
+	// Step 2: 删除未使用的块
+	for _, blkID := range unusedKeys {
+		klog.Infof("[adjustDevices] 删除未使用块: %v", d.mm.Uuid2ColocMetaData[blkID])
+		delete(d.mm.Uuid2ColocMetaData, blkID)
+		delete(d.devices, blkID)
+		deletedCount++
+	}
+
+	// Step 3: 如果不够，按 most_used 策略删除使用中的块（整 pod）
+	if deletedCount < targetDeleteCount {
+		type podStat struct {
+			PodName  string
+			BlockIDs []string
+		}
+		var podStats []podStat
+		for podName, podInfo := range d.mm.Pod2PodInfo {
+			podStats = append(podStats, podStat{
+				PodName:  podName,
+				BlockIDs: podInfo.BindColocIds,
+			})
+		}
+
+		sort.Slice(podStats, func(i, j int) bool {
+			return len(podStats[i].BlockIDs) > len(podStats[j].BlockIDs)
 		})
 
-		// Step 3: 选择需要迁移的 Pod，直到满足删除数量
-		podsToMigrate := make(map[string]bool)
-		collectedBlocks := make(map[string]bool)
-
-		// 选择 Pod，直到删除数量达到目标
-		for _, blk := range usedBlocks {
+		// 删除使用中块
+		for _, pod := range podStats {
 			if deletedCount >= targetDeleteCount {
 				break
 			}
-			podsToMigrate[blk.BindPod] = true
-		}
+			klog.Infof("[adjustDevices] 迁移 Pod: %s, 删除绑定块: %v", pod.PodName, pod.BlockIDs)
+			for _, blkID := range pod.BlockIDs {
+				delete(d.mm.Uuid2ColocMetaData, blkID)
+				delete(d.devices, blkID)
+				deletedCount++
 
-		// Step 4: 删除选中的 Pod 绑定的所有块
-		for podUID := range podsToMigrate {
-			blockIDs := d.mm.Pod2ColocIds[podUID]
-			klog.Warningf("[adjustDevices] 迁移 Pod: %s, 删除绑定块: %v", podUID, blockIDs)
+				// 记录交换出去的块
+				d.mm.Pod2PodInfo[pod.PodName].SwapColocIds = append(d.mm.Pod2PodInfo[pod.PodName].SwapColocIds, blkID)
 
-			for _, blkID := range blockIDs {
-				if _, exists := d.mm.Uuid2ColocMetaData[blkID]; exists && !collectedBlocks[blkID] {
-					klog.Infof("[adjustDevices] 删除块: %s", blkID)
-					delete(d.mm.Uuid2ColocMetaData, blkID)
-					delete(d.devices, blkID)
-					collectedBlocks[blkID] = true
-					deletedCount++
+				// 如果删除的块数量超过目标数量，维护新的块
+				// 这样子对k8s来说多余的块空了出来，作为一个新的设备
+				if deletedCount > targetDeleteCount {
+					d.generateNewBlock()
 				}
 			}
-			delete(d.mm.Pod2ColocIds, podUID)
-			klog.Infof("[adjustDevices] 删除 Pod 映射: %s", podUID)
 
-			// TODO: 执行迁移逻辑，比如 migrationQueue <- podUID
-			if deletedCount >= targetDeleteCount {
-				break
-			}
+			// 清空Pod绑定的虚拟内存块
+			d.mm.Pod2PodInfo[pod.PodName].BindColocIds = []string{}
+
+			klog.Infof("[adjustDevices] %s信息更新, BindColocIds数量: %d, SwapColocIds数量: %d", d.mm.Pod2PodInfo[pod.PodName].Name, len(d.mm.Pod2PodInfo[pod.PodName].BindColocIds), len(d.mm.Pod2PodInfo[pod.PodName].SwapColocIds))
+			// TODO: 可加入异步迁移队列 migrationQueue <- pod.PodUID
 		}
 	}
 
-	// 发送通知
 	d.notify <- struct{}{}
 	klog.Infof("[adjustDevices] 总共删除设备数量: %d（目标 %d）", deletedCount, targetDeleteCount)
 }
 
-func (d *DeviceMonitor) chooseColocBlocksByLru() (string, *memory_manager.ColocMemoryBlockMetaData) {
-	var lruKey string
-	var lruMeta *memory_manager.ColocMemoryBlockMetaData
-	minTime := time.Now()
+func (d *DeviceMonitor) generateNewBlock() {
+	newDeviceID := fmt.Sprintf(common.DeviceName, utils.GetUuid())
 
-	for k, v := range d.mm.Uuid2ColocMetaData {
-		if v.UpdateTime.Before(minTime) {
-			minTime = v.UpdateTime
-			lruKey = k
-			lruMeta = v
-		}
+	d.mm.Uuid2ColocMetaData[newDeviceID] = &memory_manager.ColocMemoryBlockMetaData{
+		Uuid:       newDeviceID,
+		Used:       false,
+		BindPod:    "",
+		UpdateTime: time.Now(),
 	}
 
-	return lruKey, lruMeta
+	d.devices[newDeviceID] = &pluginapi.Device{
+		ID:     newDeviceID,
+		Health: pluginapi.Healthy,
+	}
 }
 
 // Devices transformer map to slice
