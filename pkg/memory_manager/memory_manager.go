@@ -43,7 +43,6 @@ type MemoryManager struct {
 	Uuid2ColocMetaData map[string]*ColocMemoryBlockMetaData // Uuid -> ColocMemoryBlockMetaData,维护混部内存块元数据
 	PrevBlocks         int                                  // 用于维护先前的混部内存虚拟块数
 
-	// TODO: Pod2ColocIds和Uuid2ColocMetaData可以放在数据库里维护
 	Pod2PodInfo    map[string]*PodInfo // Pod名称 -> Pod信息
 	LastUpdateTime time.Time           // 上次更新时间
 
@@ -54,6 +53,7 @@ func NewMemoryManager() *MemoryManager {
 	mm := &MemoryManager{
 		Uuid2ColocMetaData: make(map[string]*ColocMemoryBlockMetaData),
 		Pod2PodInfo:        make(map[string]*PodInfo),
+		IsReady:            true,
 	}
 	err := mm.Initialize()
 	if err != nil {

@@ -47,7 +47,19 @@ func (m *MemoryManager) WatchPods() {
 
 	// 监听混部Pod事件
 	// 混部任务有个专门的namespace: "colocation-memory"
-	watcher, err := clientset.CoreV1().Pods("colocation-memory").Watch(context.TODO(), metav1.ListOptions{})
+	pods, err := clientset.CoreV1().Pods("colocation-memory").List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		klog.Error("[WatchPods] list error: ", err)
+		return
+	}
+
+	// 获取最新的 resourceVersion
+	rv := pods.ResourceVersion
+
+	watcher, err := clientset.CoreV1().Pods("colocation-memory").Watch(context.TODO(), metav1.ListOptions{
+		ResourceVersion: rv,
+	})
+
 	if err != nil {
 		klog.Error("[WatchPods] ", err)
 	}
@@ -60,7 +72,7 @@ func (m *MemoryManager) WatchPods() {
 		}
 
 		switch event.Type {
-		// TODO: 这里会先监听历史的Pod创建事件，再持续监听新的Pod创建事件，后面在Pod换出池化内存时注意下，可能Pod维护的环境变量里面有CM-xxxx，但实际在mm.Uuid2ColocMetaData中已经被删除 (换出的时候别忘了维护就行）
+		// TODO: 这里会先监听历史的Pod创建事件，再持续监听新的Pod创建事件，在Pod换出池化内存后需要注意，可能Pod维护的环境变量里面有CM-xxxx，但实际在mm.Uuid2ColocMetaData中已经被删除
 		case watch.Added:
 			m.handlePodAdded(clientset, pod.Namespace, pod.Name)
 		case watch.Deleted:
@@ -72,14 +84,15 @@ func (m *MemoryManager) WatchPods() {
 // 等待 Pod 进入 Running 状态，然后执行 `env` 命令获取运行时环境变量
 func (m *MemoryManager) waitForPodAndFetchDevIds(clientset *kubernetes.Clientset, config string, namespace, podName string) {
 	// 等待 Pod 进入 Running 状态
-	// TODO: 有空把弃用的函数改掉
+	// Pod创建事件 -> Pod创建成功
 	// 这里有个时序问题，如果在等待Pod进入running的时候还没更新ColocMetaData，device monitor的判断就会出问题
 	m.IsReady = false
 	defer func() {
 		m.IsReady = true
 	}()
+	// TODO: 有空把弃用的函数改掉
 	err := wait.PollImmediate(2*time.Second, 60*time.Second, func() (bool, error) {
-		pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), podName, metav1.GetOptions{})
+		pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
 		if err != nil {
 			return false, err
 		}

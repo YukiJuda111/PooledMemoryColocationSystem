@@ -97,18 +97,11 @@ func (d *DeviceMonitor) adjustDevices() error {
 	switch {
 	case delta > 0:
 		// 增加块
-		// TODO: 内存增加时，先看看在用池化内存的pod有没有可以换入的
-		for range delta {
-			d.generateNewBlock()
-		}
-		d.notify <- struct{}{}
-		klog.Info("[adjustDevices] 增加设备数量: ", delta)
+		d.addColocDevices(delta)
 	case delta < 0:
 		// 减少块
-		removeCount := -delta
-		d.removeColocDevicesMostUsed(removeCount)
+		d.removeColocDevices(-delta)
 	case delta == 0:
-		// TODO: 不变
 		klog.Info("[adjustDevices] 设备数量不变")
 	}
 
@@ -117,7 +110,48 @@ func (d *DeviceMonitor) adjustDevices() error {
 	return nil
 }
 
-func (d *DeviceMonitor) removeColocDevicesMostUsed(removeCount int) {
+func (d *DeviceMonitor) addColocDevices(addCount int) {
+	// 增加块
+	remainingDelta := addCount
+
+	// Step 1: 优先从 SwapColocIds 中取回块
+	for podName, podInfo := range d.mm.Pod2PodInfo {
+		if remainingDelta <= 0 {
+			break
+		}
+
+		// 如果 Pod 的 SwapColocIds 中的块数大于 remainingDelta或者不存在交换块，则跳过
+		if len(podInfo.SwapColocIds) == 0 || len(podInfo.SwapColocIds) > remainingDelta {
+			continue
+		}
+
+		for _, blkID := range podInfo.SwapColocIds {
+			if remainingDelta <= 0 {
+				break
+			}
+
+			d.generateBlock(true, blkID, podInfo.Name)
+			d.mm.Pod2PodInfo[podName].BindColocIds = append(d.mm.Pod2PodInfo[podName].BindColocIds, blkID)
+			remainingDelta--
+		}
+
+		// TODO: 写死
+		d.mm.MigratePod(podName, "2", "0,1")
+
+		// 清空 Pod 的 SwapColocIds
+		d.mm.Pod2PodInfo[podName].SwapColocIds = []string{}
+
+	}
+
+	// Step 2: 如果不足，生成新的块
+	for range remainingDelta {
+		d.generateBlock(false, "", "")
+	}
+	d.notify <- struct{}{}
+	klog.Infof("[adjustDevices] 增加设备完成，总共增加设备数量: %d", addCount)
+}
+
+func (d *DeviceMonitor) removeColocDevices(removeCount int) {
 	deletedCount := 0
 	targetDeleteCount := removeCount
 
@@ -172,37 +206,60 @@ func (d *DeviceMonitor) removeColocDevicesMostUsed(removeCount int) {
 				// 记录交换出去的块
 				d.mm.Pod2PodInfo[pod.PodName].SwapColocIds = append(d.mm.Pod2PodInfo[pod.PodName].SwapColocIds, blkID)
 
-				// 如果删除的块数量超过目标数量，维护新的块
+				// 如果删除的块数量超过目标数量，生成新的块
 				// 这样子对k8s来说多余的块空了出来，作为一个新的设备
 				if deletedCount > targetDeleteCount {
-					d.generateNewBlock()
+					d.generateBlock(false, "", "")
 				}
+			}
+
+			// TODO: 这里写死了NUMA node
+			err := d.mm.MigratePod(pod.PodName, "0", "2")
+			if err != nil {
+				// TODO: 回滚+兜底迁移 不要在原节点部署就行
+			}
+			err = d.mm.MigratePod(pod.PodName, "1", "2")
+			if err != nil {
+				// TODO: 回滚+兜底迁移
 			}
 
 			// 清空Pod绑定的虚拟内存块
 			d.mm.Pod2PodInfo[pod.PodName].BindColocIds = []string{}
 
 			klog.Infof("[adjustDevices] %s信息更新, BindColocIds数量: %d, SwapColocIds数量: %d", d.mm.Pod2PodInfo[pod.PodName].Name, len(d.mm.Pod2PodInfo[pod.PodName].BindColocIds), len(d.mm.Pod2PodInfo[pod.PodName].SwapColocIds))
-			// TODO: 可加入异步迁移队列 migrationQueue <- pod.PodUID
+			// TODO: 如果池化内存不够，还有个兜底迁移
 		}
 	}
 
 	d.notify <- struct{}{}
-	klog.Infof("[adjustDevices] 总共删除设备数量: %d（目标 %d）", deletedCount, targetDeleteCount)
+	klog.Infof("[adjustDevices] 总共删除设备数量: %d(目标 %d)", deletedCount, targetDeleteCount)
 }
 
-func (d *DeviceMonitor) generateNewBlock() {
-	newDeviceID := fmt.Sprintf(common.DeviceName, utils.GetUuid())
+func (d *DeviceMonitor) generateBlock(isSwap bool, swapColocId string, podName string) {
 
-	d.mm.Uuid2ColocMetaData[newDeviceID] = &memory_manager.ColocMemoryBlockMetaData{
-		Uuid:       newDeviceID,
-		Used:       false,
-		BindPod:    "",
-		UpdateTime: time.Now(),
+	var deviceId string
+
+	switch isSwap {
+	case true:
+		deviceId = swapColocId
+		d.mm.Uuid2ColocMetaData[deviceId] = &memory_manager.ColocMemoryBlockMetaData{
+			Uuid:       deviceId,
+			Used:       true,
+			BindPod:    podName,
+			UpdateTime: time.Now(),
+		}
+	case false:
+		deviceId = fmt.Sprintf(common.DeviceName, utils.GetUuid())
+		d.mm.Uuid2ColocMetaData[deviceId] = &memory_manager.ColocMemoryBlockMetaData{
+			Uuid:       deviceId,
+			Used:       false,
+			BindPod:    "",
+			UpdateTime: time.Now(),
+		}
 	}
 
-	d.devices[newDeviceID] = &pluginapi.Device{
-		ID:     newDeviceID,
+	d.devices[deviceId] = &pluginapi.Device{
+		ID:     deviceId,
 		Health: pluginapi.Healthy,
 	}
 }
