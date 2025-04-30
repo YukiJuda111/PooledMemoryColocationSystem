@@ -21,11 +21,12 @@ type DeviceMonitor struct {
 }
 
 func NewDeviceMonitor(mm *memory_manager.MemoryManager) *DeviceMonitor {
-	return &DeviceMonitor{
+	monitor := &DeviceMonitor{
 		devices: make(map[string]*pluginapi.Device),
 		notify:  make(chan struct{}),
 		mm:      mm,
 	}
+	return monitor
 }
 
 // List all devices
@@ -54,12 +55,16 @@ func (d *DeviceMonitor) Watch() error {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		// 这里判断IsReady，防止pods_monitor在等待Pod进入running的时候还没更新ColocMetaData
-		// 类似于锁
-		if !d.mm.IsReady {
+		// 防止pods_monitor在等待Pod进入running的时候还没更新ColocMetaData
+		if d.mm.PodCreateRunning {
 			klog.Info("[Watch] 有pod在创建过程中,跳过本次监控")
 			continue
 		}
+		if d.mm.PeriodicReclaimRunning {
+			klog.Info("[Watch] 有pod在回收过程中,跳过本次监控")
+			continue
+		}
+
 		d.mm.UpdateState()
 		if err := d.adjustDevices(); err != nil {
 			klog.Errorf("[Watch] 调整设备失败: %v", err)
@@ -70,6 +75,59 @@ func (d *DeviceMonitor) Watch() error {
 
 	return nil
 
+}
+
+func (d *DeviceMonitor) PeriodicReclaimCheck() {
+	ticker := time.NewTicker(common.ReclaimCheckInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		if d.mm.PodCreateRunning {
+			klog.Info("[periodicReclaimCheck] 有pod在创建过程中,跳过本次巡检")
+			continue
+		}
+		klog.Infof("[periodicReclaimCheck] 开始周期性检查交换块并尝试迁回 Pod")
+		d.tryReclaimSwapBlocks()
+	}
+}
+
+func (d *DeviceMonitor) tryReclaimSwapBlocks() {
+	d.mm.PeriodicReclaimRunning = true
+	defer func() {
+		d.mm.PeriodicReclaimRunning = false
+	}()
+
+	for podName, podInfo := range d.mm.Pod2PodInfo {
+		// 如果没有待回收的块，跳过
+		if len(podInfo.SwapColocIds) == 0 {
+			continue
+		}
+
+		// 检查是否有足够的空闲块（Used == false）
+		freeCount := 0
+		for _, meta := range d.mm.Uuid2ColocMetaData {
+			if !meta.Used {
+				freeCount++
+			}
+		}
+
+		if freeCount < len(podInfo.SwapColocIds) {
+			klog.Infof("[periodicReclaimCheck] 空闲块不足，无法将 pod %s 迁回", podName)
+			continue
+		}
+
+		// 开始恢复块
+		for _, blkID := range podInfo.SwapColocIds {
+			d.generateBlock(true, blkID, podInfo.Name)
+			podInfo.BindColocIds = append(podInfo.BindColocIds, blkID)
+		}
+
+		// 触发 Pod 迁移逻辑
+		d.mm.MigratePod(podName, "2", "0,1")
+		klog.Infof("[periodicCheck] Pod %s 已迁回，恢复 %d 个块", podName, len(podInfo.SwapColocIds))
+
+		// 清空 SwapColocIds
+		podInfo.SwapColocIds = []string{}
+	}
 }
 
 // 调整虚拟块队列块数和设备列表
@@ -111,40 +169,46 @@ func (d *DeviceMonitor) adjustDevices() error {
 }
 
 func (d *DeviceMonitor) addColocDevices(addCount int) {
-	// 增加块
-	remainingDelta := addCount
+	// // 增加块
+	// remainingDelta := addCount
 
-	// Step 1: 优先从 SwapColocIds 中取回块
-	for podName, podInfo := range d.mm.Pod2PodInfo {
-		if remainingDelta <= 0 {
-			break
-		}
+	/*
+		这里的逻辑会产生一个问题：Pod会永远处于Swap状态，无法迁回到原来的节点
+		因此考虑通过一个巡检任务回迁Pod
+		新的逻辑在PeriodicReclaimCheck()中实现
+	*/
 
-		// 如果 Pod 的 SwapColocIds 中的块数大于 remainingDelta或者不存在交换块，则跳过
-		if len(podInfo.SwapColocIds) == 0 || len(podInfo.SwapColocIds) > remainingDelta {
-			continue
-		}
+	// // Step 1: 优先从 SwapColocIds 中取回块
+	// for podName, podInfo := range d.mm.Pod2PodInfo {
+	// 	if remainingDelta <= 0 {
+	// 		break
+	// 	}
 
-		for _, blkID := range podInfo.SwapColocIds {
-			if remainingDelta <= 0 {
-				break
-			}
+	// 	// 如果 Pod 的 SwapColocIds 中的块数大于 remainingDelta或者不存在交换块，则跳过
+	// 	if len(podInfo.SwapColocIds) == 0 || len(podInfo.SwapColocIds) > remainingDelta {
+	// 		continue
+	// 	}
 
-			d.generateBlock(true, blkID, podInfo.Name)
-			d.mm.Pod2PodInfo[podName].BindColocIds = append(d.mm.Pod2PodInfo[podName].BindColocIds, blkID)
-			remainingDelta--
-		}
+	// 	for _, blkID := range podInfo.SwapColocIds {
+	// 		if remainingDelta <= 0 {
+	// 			break
+	// 		}
 
-		// TODO: 写死
-		d.mm.MigratePod(podName, "2", "0,1")
+	// 		d.generateBlock(true, blkID, podInfo.Name)
+	// 		d.mm.Pod2PodInfo[podName].BindColocIds = append(d.mm.Pod2PodInfo[podName].BindColocIds, blkID)
+	// 		remainingDelta--
+	// 	}
 
-		// 清空 Pod 的 SwapColocIds
-		d.mm.Pod2PodInfo[podName].SwapColocIds = []string{}
+	// 	// TODO: 写死
+	// 	d.mm.MigratePod(podName, "2", "0,1")
 
-	}
+	// 	// 清空 Pod 的 SwapColocIds
+	// 	d.mm.Pod2PodInfo[podName].SwapColocIds = []string{}
 
-	// Step 2: 如果不足，生成新的块
-	for range remainingDelta {
+	// }
+
+	// // Step 2: 如果不足，生成新的块
+	for range addCount {
 		d.generateBlock(false, "", "")
 	}
 	d.notify <- struct{}{}
@@ -241,6 +305,23 @@ func (d *DeviceMonitor) generateBlock(isSwap bool, swapColocId string, podName s
 
 	switch isSwap {
 	case true:
+		// Step 1: 删除一个旧的 Used == false 的空闲块
+		var removedID string
+		for id, meta := range d.mm.Uuid2ColocMetaData {
+			if !meta.Used {
+				removedID = id
+				break
+			}
+		}
+
+		if removedID != "" {
+			delete(d.mm.Uuid2ColocMetaData, removedID)
+			delete(d.devices, removedID)
+		} else {
+			klog.Warningf("[generateBlock] 未找到可回收的空闲块，无法清理空间恢复块 %s", swapColocId)
+		}
+
+		// Step 2: 恢复 swapColocId 块为已用状态
 		deviceId = swapColocId
 		d.mm.Uuid2ColocMetaData[deviceId] = &memory_manager.ColocMemoryBlockMetaData{
 			Uuid:       deviceId,

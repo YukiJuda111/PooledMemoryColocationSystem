@@ -16,10 +16,12 @@ const (
 	K8sPodsBasePath = "/sys/fs/cgroup/kubepods.slice"
 	BurstablePath   = "/kubepods-burstable.slice/memory.current"
 	BestEffortPath  = "/kubepods-besteffort.slice/memory.current"
-	RefreshInterval = time.Second * 5
-	DeviceName      = "CM-%s"                // 设备名称
+	RefreshInterval = 10 * time.Second
+	DeviceName      = "AA-%s"                // 设备名称
 	KubeConfigPath  = "/home/liuyang/config" // kubeconfig路径
 
 	DebounceThreshold     = 1                // 防抖阈值
 	MinAdjustmentInterval = 60 * time.Second // 最小调整间隔
+
+	ReclaimCheckInterval = 13 * time.Second // 回收Pod检查间隔
 )

@@ -44,6 +44,9 @@ func (c *ColocationMemoryDevicePlugin) Run() error {
 			log.Println("watch devices error")
 		}
 	}()
+
+	go c.dm.PeriodicReclaimCheck()
+
 	// use grpc to register
 	pluginapi.RegisterDevicePluginServer(c.server, c)
 	// delete old unix socket before start

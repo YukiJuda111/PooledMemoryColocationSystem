@@ -46,14 +46,16 @@ type MemoryManager struct {
 	Pod2PodInfo    map[string]*PodInfo // Pod名称 -> Pod信息
 	LastUpdateTime time.Time           // 上次更新时间
 
-	IsReady bool // 保证pods_monitor中时序不会出问题
+	PodCreateRunning       bool // 是否正在监视Pod事件
+	PeriodicReclaimRunning bool // 是否正在定期回收Pod事件
+
 }
 
 func NewMemoryManager() *MemoryManager {
 	mm := &MemoryManager{
 		Uuid2ColocMetaData: make(map[string]*ColocMemoryBlockMetaData),
 		Pod2PodInfo:        make(map[string]*PodInfo),
-		IsReady:            true,
+		PodCreateRunning:   false,
 	}
 	err := mm.Initialize()
 	if err != nil {

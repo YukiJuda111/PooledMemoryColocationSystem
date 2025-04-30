@@ -86,9 +86,9 @@ func (m *MemoryManager) waitForPodAndFetchDevIds(clientset *kubernetes.Clientset
 	// 等待 Pod 进入 Running 状态
 	// Pod创建事件 -> Pod创建成功
 	// 这里有个时序问题，如果在等待Pod进入running的时候还没更新ColocMetaData，device monitor的判断就会出问题
-	m.IsReady = false
+	m.PodCreateRunning = true
 	defer func() {
-		m.IsReady = true
+		m.PodCreateRunning = false
 	}()
 	// TODO: 有空把弃用的函数改掉
 	err := wait.PollImmediate(2*time.Second, 60*time.Second, func() (bool, error) {
@@ -302,8 +302,6 @@ func (m *MemoryManager) removePodDeviceMapping(podName string) {
 
 // 处理 Pod 创建事件
 func (m *MemoryManager) handlePodAdded(clientset *kubernetes.Clientset, namespace, podName string) {
-	m.Lock()
-	defer m.Unlock()
 	klog.Infof("[handlePodAdded] Pod created: %s/%s", namespace, podName)
 	go m.waitForPodAndFetchDevIds(clientset, common.KubeConfigPath, namespace, podName)
 }
