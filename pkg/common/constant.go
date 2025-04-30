@@ -17,7 +17,7 @@ const (
 	BurstablePath   = "/kubepods-burstable.slice/memory.current"
 	BestEffortPath  = "/kubepods-besteffort.slice/memory.current"
 	RefreshInterval = 10 * time.Second
-	DeviceName      = "AA-%s"                // 设备名称
+	DeviceName      = "CM-%s"                // 设备名称
 	KubeConfigPath  = "/home/liuyang/config" // kubeconfig路径
 
 	DebounceThreshold     = 1                // 防抖阈值

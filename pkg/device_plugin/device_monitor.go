@@ -3,6 +3,7 @@ package device_plugin
 import (
 	"fmt"
 	"liuyang/colocation-memory-device-plugin/pkg/common"
+	"liuyang/colocation-memory-device-plugin/pkg/guaranteed_migrator"
 	"liuyang/colocation-memory-device-plugin/pkg/memory_manager"
 	"liuyang/colocation-memory-device-plugin/pkg/utils"
 	"sort"
@@ -199,7 +200,6 @@ func (d *DeviceMonitor) addColocDevices(addCount int) {
 	// 		remainingDelta--
 	// 	}
 
-	// 	// TODO: 写死
 	// 	d.mm.MigratePod(podName, "2", "0,1")
 
 	// 	// 清空 Pod 的 SwapColocIds
@@ -277,21 +277,27 @@ func (d *DeviceMonitor) removeColocDevices(removeCount int) {
 				}
 			}
 
-			// TODO: 这里写死了NUMA node
-			err := d.mm.MigratePod(pod.PodName, "0", "2")
+			// 先看看NUMA节点的内存是否充足，不充足直接兜底迁移
+			cxlNodeInfo, err := memory_manager.GetNumaMemInfo(2)
 			if err != nil {
-				// TODO: 回滚+兜底迁移 不要在原节点部署就行
+				klog.Errorf("[adjustDevices] 获取NUMA节点内存信息失败: %v", err)
 			}
-			err = d.mm.MigratePod(pod.PodName, "1", "2")
-			if err != nil {
-				// TODO: 回滚+兜底迁移
+			if cxlNodeInfo.Free < common.BlockSize*uint64(len(d.mm.Pod2PodInfo[pod.PodName].SwapColocIds)) {
+				klog.Info("[adjustDevices] NUMA节点内存不足,兜底迁移")
+				guaranteed_migrator.MigratePodToAnotherNode(fmt.Sprintf("./deploy/%s.yaml", pod.PodName))
+				klog.Info("[adjustDevices] Pod迁移完成")
+				continue
 			}
+
+			// 这里写死了NUMA node
+			d.mm.MigratePod(pod.PodName, "0", "2")
+
+			d.mm.MigratePod(pod.PodName, "1", "2")
 
 			// 清空Pod绑定的虚拟内存块
 			d.mm.Pod2PodInfo[pod.PodName].BindColocIds = []string{}
 
 			klog.Infof("[adjustDevices] %s信息更新, BindColocIds数量: %d, SwapColocIds数量: %d", d.mm.Pod2PodInfo[pod.PodName].Name, len(d.mm.Pod2PodInfo[pod.PodName].BindColocIds), len(d.mm.Pod2PodInfo[pod.PodName].SwapColocIds))
-			// TODO: 如果池化内存不够，还有个兜底迁移
 		}
 	}
 

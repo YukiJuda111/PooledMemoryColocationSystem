@@ -35,7 +35,7 @@ import (
 func (m *MemoryManager) WatchPods() {
 	klog.Info("[WatchPods] 监听Pod事件...")
 	// 加载 kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", common.KubeConfigPath) // 修改路径
+	config, err := clientcmd.BuildConfigFromFlags("", common.KubeConfigPath)
 	if err != nil {
 		klog.Error("[WatchPods] ", err)
 	}
@@ -47,7 +47,7 @@ func (m *MemoryManager) WatchPods() {
 
 	// 监听混部Pod事件
 	// 混部任务有个专门的namespace: "colocation-memory"
-	pods, err := clientset.CoreV1().Pods("colocation-memory").List(context.TODO(), metav1.ListOptions{})
+	pods, err := clientset.CoreV1().Pods("colocation-memory").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		klog.Error("[WatchPods] list error: ", err)
 		return
@@ -56,7 +56,7 @@ func (m *MemoryManager) WatchPods() {
 	// 获取最新的 resourceVersion
 	rv := pods.ResourceVersion
 
-	watcher, err := clientset.CoreV1().Pods("colocation-memory").Watch(context.TODO(), metav1.ListOptions{
+	watcher, err := clientset.CoreV1().Pods("colocation-memory").Watch(context.Background(), metav1.ListOptions{
 		ResourceVersion: rv,
 	})
 
@@ -72,7 +72,6 @@ func (m *MemoryManager) WatchPods() {
 		}
 
 		switch event.Type {
-		// TODO: 这里会先监听历史的Pod创建事件，再持续监听新的Pod创建事件，在Pod换出池化内存后需要注意，可能Pod维护的环境变量里面有CM-xxxx，但实际在mm.Uuid2ColocMetaData中已经被删除
 		case watch.Added:
 			m.handlePodAdded(clientset, pod.Namespace, pod.Name)
 		case watch.Deleted:
@@ -90,7 +89,6 @@ func (m *MemoryManager) waitForPodAndFetchDevIds(clientset *kubernetes.Clientset
 	defer func() {
 		m.PodCreateRunning = false
 	}()
-	// TODO: 有空把弃用的函数改掉
 	err := wait.PollImmediate(2*time.Second, 60*time.Second, func() (bool, error) {
 		pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
 		if err != nil {
