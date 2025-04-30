@@ -302,6 +302,8 @@ func (m *MemoryManager) removePodDeviceMapping(podName string) {
 
 // 处理 Pod 创建事件
 func (m *MemoryManager) handlePodAdded(clientset *kubernetes.Clientset, namespace, podName string) {
+	m.Lock()
+	defer m.Unlock()
 	klog.Infof("[handlePodAdded] Pod created: %s/%s", namespace, podName)
 	go m.waitForPodAndFetchDevIds(clientset, common.KubeConfigPath, namespace, podName)
 }
