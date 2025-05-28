@@ -85,9 +85,9 @@ func (m *MemoryManager) waitForPodAndFetchDevIds(clientset *kubernetes.Clientset
 	// 等待 Pod 进入 Running 状态
 	// Pod创建事件 -> Pod创建成功
 	// 这里有个时序问题，如果在等待Pod进入running的时候还没更新ColocMetaData，device monitor的判断就会出问题
-	m.PodCreateRunning = true
+	m.PodCreateRunning.Store(true)
 	defer func() {
-		m.PodCreateRunning = false
+		m.PodCreateRunning.Store(false)
 	}()
 	err := wait.PollImmediate(2*time.Second, 60*time.Second, func() (bool, error) {
 		pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})

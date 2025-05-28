@@ -3,12 +3,15 @@ package memory_manager
 import (
 	"fmt"
 	"os/exec"
+	"time"
 
 	"k8s.io/klog/v2"
 )
 
 // migrate pid fromnode tonode
 func (m *MemoryManager) MigratePod(podName string, srcNode string, dstNode string) error {
+	startTime := time.Now()
+
 	podInfo, ok := m.Pod2PodInfo[podName]
 	if !ok {
 		klog.Errorf("[MigratePod] Pod %s 不存在", podName)
@@ -26,5 +29,6 @@ func (m *MemoryManager) MigratePod(podName string, srcNode string, dstNode strin
 	}
 
 	klog.Infof("[MigratePod] 成功迁移 pod %s (pid: %d) 从节点 %s 到节点 %s", podName, pid, srcNode, dstNode)
+	klog.Infof("[MigratePod] 迁移耗时: %s", time.Since(startTime))
 	return nil
 }

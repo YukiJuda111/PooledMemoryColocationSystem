@@ -16,6 +16,7 @@ import (
 	"liuyang/colocation-memory-device-plugin/pkg/common"
 	"liuyang/colocation-memory-device-plugin/pkg/utils"
 	"path"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -46,17 +47,20 @@ type MemoryManager struct {
 	Pod2PodInfo    map[string]*PodInfo // Pod名称 -> Pod信息
 	LastUpdateTime time.Time           // 上次更新时间
 
-	PodCreateRunning       bool // 是否正在监视Pod事件
-	PeriodicReclaimRunning bool // 是否正在定期回收Pod事件
+	PodCreateRunning       atomic.Bool // 是否正在监视Pod事件
+	PeriodicReclaimRunning atomic.Bool // 是否正在定期回收Pod事件
 
 }
 
 func NewMemoryManager() *MemoryManager {
 	mm := &MemoryManager{
-		Uuid2ColocMetaData: make(map[string]*ColocMemoryBlockMetaData),
-		Pod2PodInfo:        make(map[string]*PodInfo),
-		PodCreateRunning:   false,
+		Uuid2ColocMetaData:     make(map[string]*ColocMemoryBlockMetaData),
+		Pod2PodInfo:            make(map[string]*PodInfo),
+		PodCreateRunning:       atomic.Bool{},
+		PeriodicReclaimRunning: atomic.Bool{},
 	}
+	mm.PodCreateRunning.Store(false)
+	mm.PeriodicReclaimRunning.Store(false)
 	err := mm.Initialize()
 	if err != nil {
 		klog.Fatalf("[NewMemoryManager] 初始化内存信息失败: %v", err)

@@ -1,4 +1,4 @@
-package guaranteed_migrator
+package fallback_migrator
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 )
 
 func MigratePodToAnotherNode(yamlPath string) {
+
 	// 加载 kubeconfig
 	config, err := clientcmd.BuildConfigFromFlags("", common.KubeConfigPath)
 	if err != nil {
@@ -53,6 +54,13 @@ func MigratePodToAnotherNode(yamlPath string) {
 		// 如果 Pod 存在并且在 cxl-server 节点上，删除它
 		if existingPod.Spec.NodeName == "cxl-server" {
 			klog.Info("[MigratePodToAnotherNode] Existing Pod found on cxl-server, deleting it...")
+
+			err = clientset.CoreV1().Pods(namespace).Delete(context.Background(), existingPod.Name, metav1.DeleteOptions{})
+			if err != nil {
+				klog.Error("[MigratePodToAnotherNode] ", err)
+				return
+			}
+
 		} else {
 			klog.Info("[MigratePodToAnotherNode] Existing Pod found, not deleting...")
 			return

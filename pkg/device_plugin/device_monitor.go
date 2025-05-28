@@ -3,7 +3,6 @@ package device_plugin
 import (
 	"fmt"
 	"liuyang/colocation-memory-device-plugin/pkg/common"
-	"liuyang/colocation-memory-device-plugin/pkg/guaranteed_migrator"
 	"liuyang/colocation-memory-device-plugin/pkg/memory_manager"
 	"liuyang/colocation-memory-device-plugin/pkg/utils"
 	"sort"
@@ -57,11 +56,11 @@ func (d *DeviceMonitor) Watch() error {
 
 	for range ticker.C {
 		// 防止pods_monitor在等待Pod进入running的时候还没更新ColocMetaData
-		if d.mm.PodCreateRunning {
+		if d.mm.PodCreateRunning.Load() {
 			klog.Info("[Watch] 有pod在创建过程中,跳过本次监控")
 			continue
 		}
-		if d.mm.PeriodicReclaimRunning {
+		if d.mm.PeriodicReclaimRunning.Load() {
 			klog.Info("[Watch] 有pod在回收过程中,跳过本次监控")
 			continue
 		}
@@ -82,7 +81,7 @@ func (d *DeviceMonitor) PeriodicReclaimCheck() {
 	ticker := time.NewTicker(common.ReclaimCheckInterval)
 	defer ticker.Stop()
 	for range ticker.C {
-		if d.mm.PodCreateRunning {
+		if d.mm.PodCreateRunning.Load() {
 			klog.Info("[periodicReclaimCheck] 有pod在创建过程中,跳过本次巡检")
 			continue
 		}
@@ -92,9 +91,9 @@ func (d *DeviceMonitor) PeriodicReclaimCheck() {
 }
 
 func (d *DeviceMonitor) tryReclaimSwapBlocks() {
-	d.mm.PeriodicReclaimRunning = true
+	d.mm.PeriodicReclaimRunning.Store(true)
 	defer func() {
-		d.mm.PeriodicReclaimRunning = false
+		d.mm.PeriodicReclaimRunning.Store(false)
 	}()
 
 	for podName, podInfo := range d.mm.Pod2PodInfo {
@@ -277,22 +276,20 @@ func (d *DeviceMonitor) removeColocDevices(removeCount int) {
 				}
 			}
 
-			// 先看看NUMA节点的内存是否充足，不充足直接兜底迁移
-			cxlNodeInfo, err := memory_manager.GetNumaMemInfo(2)
-			if err != nil {
-				klog.Errorf("[adjustDevices] 获取NUMA节点内存信息失败: %v", err)
-			}
-			if cxlNodeInfo.Free < common.BlockSize*uint64(len(d.mm.Pod2PodInfo[pod.PodName].SwapColocIds)) {
-				klog.Info("[adjustDevices] NUMA节点内存不足,兜底迁移")
-				guaranteed_migrator.MigratePodToAnotherNode(fmt.Sprintf("./deploy/%s.yaml", pod.PodName))
-				klog.Info("[adjustDevices] Pod迁移完成")
-				continue
-			}
+			// TODO: 先看看NUMA节点的内存是否充足，不充足直接兜底迁移
+			// cxlNodeInfo, err := memory_manager.GetNumaMemInfo(2)
+			// if err != nil {
+			// 	klog.Errorf("[adjustDevices] 获取NUMA节点内存信息失败: %v", err)
+			// }
+			// if cxlNodeInfo.Free < common.BlockSize*uint64(len(d.mm.Pod2PodInfo[pod.PodName].SwapColocIds)) {
+			// 	klog.Info("[adjustDevices] NUMA节点内存不足,兜底迁移")
+			// 	fallback_migrator.MigratePodToAnotherNode(fmt.Sprintf("/home/liuyang/i-device-plugin-main/deploy/%s.yaml", pod.PodName))
+			// 	klog.Info("[adjustDevices] Pod迁移完成")
+			// 	continue
+			// }
 
 			// 这里写死了NUMA node
-			d.mm.MigratePod(pod.PodName, "0", "2")
-
-			d.mm.MigratePod(pod.PodName, "1", "2")
+			d.mm.MigratePod(pod.PodName, "0,1", "2")
 
 			// 清空Pod绑定的虚拟内存块
 			d.mm.Pod2PodInfo[pod.PodName].BindColocIds = []string{}
